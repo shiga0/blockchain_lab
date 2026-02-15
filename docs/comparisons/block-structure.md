@@ -6,8 +6,9 @@
 |-----------|--------|---------|---------|------------|
 | Linear Chain | Bitcoin, Ethereum, Core | 1 | 破棄 | 低 |
 | Linear + Commit | Cosmos | 1 | なし (BFT) | 中 |
-| DAG | Kaspa, IOTA | 複数 | 含む | 高 |
+| DAG | Kaspa, IOTA, Avalanche X-Chain | 複数 | 含む | 高 |
 | Slot-Entry | Solana | 1 (prev slot) | スキップ可 | 超高 |
+| Snowman Chain | Avalanche P/C-Chain | 1 | なし (Snowball) | 高 |
 
 ## Linear Chain (Bitcoin/Ethereum/Core)
 
@@ -236,16 +237,90 @@ Block N:
 - **Evidence**: 二重投票等の不正を記録・スラッシング
 - **軽量クライアント対応**: Header と Commit だけで検証可能
 
+## Snowman Chain (Avalanche P/C-Chain)
+
+### 構造
+
+Avalanche の P-Chain と C-Chain は Snowman コンセンサスを使用する線形チェーン。
+
+```
+[Block 0] ← [Block 1] ← [Block 2] ← [Block 3]
+                              ↓
+                    Snowball でファイナリティ
+```
+
+### Snowball によるブロック合意
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Block Decision                           │
+├─────────────────────────────────────────────────────────────┤
+│  Choice A: Block hash = 0xabc...                           │
+│  Choice B: Block hash = 0xdef...                           │
+│                                                             │
+│  Snowball Instance:                                         │
+│    preference: A                                            │
+│    preferenceStrength: {A: 15, B: 3}                       │
+│    confidence: 12                                           │
+│    finalized: false                                         │
+│                                                             │
+│  Round N: Sample k=20 validators                            │
+│           16 prefer A (≥ α=15) → confidence++               │
+│           ...                                               │
+│  Round N+8: confidence reaches β=20 → FINALIZED            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 実装
+
+```rust
+// implementations/avalanche/src/snowball.rs
+
+pub struct Snowball {
+    snowflake: Snowflake,                    // 信頼度追跡
+    preference_strength: HashMap<ChoiceId, usize>,  // 累積投票
+    strongest: Option<ChoiceId>,             // 最強選択肢
+}
+
+pub struct BinarySnowball {
+    preference: bool,          // 現在の選好
+    strength_a: usize,         // 選択肢Aの累積
+    strength_b: usize,         // 選択肢Bの累積
+    confidence: usize,         // 信頼度カウンター
+    finalized: bool,           // 最終化フラグ
+}
+```
+
+## DAG (Avalanche X-Chain)
+
+X-Chain は DAG 構造を使用（Kaspa と同様のアプローチ）。
+
+```
+複数の親を参照可能 + UTXO モデル
+
+         ┌───────────────┐
+         ↓               ↓
+[Vtx0] ← [Vtx1] ← [Vtx3] ← [Vtx5]
+         ↑     ↗ ↖     ↑
+       [Vtx2] ← [Vtx4]
+```
+
+### 特徴
+
+- **リーダーレス**: 誰でも vertex (ブロック) を提案可能
+- **高スループット**: 並列提案・処理
+- **Snowball で順序付け**: コンフリクトを投票で解決
+
 ## 比較表
 
-| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry |
-|------|-------------|---------------|-----|------------|
-| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング |
-| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 |
-| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 |
-| 実装難易度 | 低 | 中 | 高 | 中 |
-| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) |
-| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 |
+| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman |
+|------|-------------|---------------|-----|------------|---------|
+| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 |
+| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし |
+| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 |
+| 実装難易度 | 低 | 中 | 高 | 中 | 中 |
+| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) |
+| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 |
 
 ## Tips vs Single Tip
 
@@ -278,3 +353,5 @@ Tips は複数存在可能（子を持たないブロック）
 | DAG (Kaspa) | `implementations/kaspa/src/dag.rs` |
 | Slot-Entry (Solana) | `implementations/solana/src/consensus.rs` |
 | Linear+Commit (Cosmos) | `implementations/cosmos/src/types.rs` |
+| Snowball (Avalanche) | `implementations/avalanche/src/snowball.rs` |
+| Subnet (Avalanche) | `implementations/avalanche/src/subnet.rs` |

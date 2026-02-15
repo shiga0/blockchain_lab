@@ -8,6 +8,7 @@
 | Account | Ethereum | アカウント残高マップ | 低 |
 | Account + Owner | Solana | アカウント + 所有者プログラム | 高 |
 | Account + ABCI | Cosmos | アカウント + モジュール分離 | 中 |
+| Multi-VM Subnet | Avalanche | チェーン別 (UTXO/Account/Custom) | 高 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -231,16 +232,90 @@ pub trait Application {
 }
 ```
 
+## Multi-VM Subnet Model (Avalanche)
+
+### 概念
+
+Avalanche は Subnet ごとに異なる VM を実行可能。各チェーンが独自のデータモデルを持つ。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Primary Network                         │
+├─────────────────────────────────────────────────────────────┤
+│  P-Chain (Platform VM):                                     │
+│    ・バリデーター管理                                       │
+│    ・Subnet 作成                                            │
+│    ・UTXO モデル                                            │
+│                                                             │
+│  X-Chain (Avalanche VM - AVM):                              │
+│    ・デジタルアセット作成・転送                             │
+│    ・DAG 構造 + UTXO モデル                                 │
+│                                                             │
+│  C-Chain (Coreth - EVM):                                    │
+│    ・スマートコントラクト                                   │
+│    ・Account モデル (Ethereum互換)                          │
+└─────────────────────────────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────┐
+│                      Custom Subnets                          │
+├─────────────────────────────────────────────────────────────┤
+│  Subnet A (Gaming):         Subnet B (DeFi):                │
+│    Custom VM                  Subnet EVM                    │
+│    独自データモデル            Account モデル               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### VM タイプ別データモデル
+
+| VM | データモデル | 用途 |
+|----|-------------|------|
+| Platform VM | UTXO | ステーキング、Subnet管理 |
+| AVM | DAG + UTXO | アセット転送、NFT |
+| EVM (Coreth) | Account | スマートコントラクト |
+| Subnet EVM | Account (カスタム) | DeFi、ゲーム |
+| Custom VM | 任意 | 独自ロジック |
+
+### バリデーターセット
+
+```rust
+// implementations/avalanche/src/validator.rs
+
+pub struct Validator {
+    pub node_id: NodeId,          // ノードID
+    pub stake: Stake,             // ステーク量
+    pub is_active: bool,          // アクティブ状態
+    pub start_time: u64,          // 検証開始時刻
+    pub end_time: u64,            // 検証終了時刻
+}
+
+pub struct ValidatorSet {
+    validators: HashMap<NodeId, Validator>,
+    total_stake: Stake,
+}
+```
+
+### 特徴
+
+**メリット:**
+- VM 選択の柔軟性（用途に最適な VM）
+- Subnet ごとの独立したルール・手数料
+- Primary Network のセキュリティを継承
+
+**デメリット:**
+- 複数 VM の複雑性
+- Subnet バリデーターの募集が必要
+- クロスチェーン操作が必要
+
 ## 比較表
 
-| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) |
-|------|------|---------------|---------------------|----------------------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 |
-| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) |
-| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) |
-| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) |
-| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) |
+|------|------|---------------|---------------------|----------------------|-----------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) |
+| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 |
+| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 |
 
 ## 実装ファイル
 
@@ -253,3 +328,5 @@ pub trait Application {
 | Runtime (Solana) | `implementations/solana/src/runtime.rs` |
 | ABCI (Cosmos) | `implementations/cosmos/src/abci.rs` |
 | Types (Cosmos) | `implementations/cosmos/src/types.rs` |
+| Validator (Avalanche) | `implementations/avalanche/src/validator.rs` |
+| Subnet (Avalanche) | `implementations/avalanche/src/subnet.rs` |

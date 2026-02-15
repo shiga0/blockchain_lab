@@ -16,7 +16,8 @@ blockchain_lab/
 │   ├── kaspa/               # Kaspa風実装（GHOSTDAG）
 │   ├── ethereum/            # Ethereum風実装（Account Model）
 │   ├── solana/              # Solana風実装（PoH + Tower BFT）
-│   └── cosmos/              # Cosmos風実装（Tendermint BFT + ABCI）
+│   ├── cosmos/              # Cosmos風実装（Tendermint BFT + ABCI）
+│   └── avalanche/           # Avalanche風実装（Snowball + Subnet）
 ├── docs/
 │   └── comparisons/         # 比較ドキュメント
 └── experiments/             # 実験・ベンチマーク
@@ -24,15 +25,15 @@ blockchain_lab/
 
 ## 比較表
 
-| 観点 | Core | Bitcoin | Kaspa | Ethereum | Solana | Cosmos |
-|------|------|---------|-------|----------|--------|--------|
-| データモデル | UTXO | UTXO | UTXO | Account | Account+Owner | Account+ABCI |
-| コンセンサス | PoW | PoW | PoW + GHOSTDAG | PoS | PoH + Tower BFT | Tendermint BFT |
-| ブロック構造 | 線形 | 線形 | DAG | 線形 | Slot-Entry | 線形+Commit |
-| ハッシュ | SHA256 | Double SHA256 | BLAKE2b | Keccak-256 | SHA256 | SHA256 |
-| 署名曲線 | P-256 | secp256k1 | secp256k1 | secp256k1 | Ed25519 | secp256k1/Ed25519 |
-| ブロック時間 | 可変 | 10分 | 1秒 | 12秒 | 400ms | 1-7秒 |
-| ファイナリティ | 確率的 | 確率的 | 確率的 | 経済的 | 経済的 | 即時 |
+| 観点 | Core | Bitcoin | Kaspa | Ethereum | Solana | Cosmos | Avalanche |
+|------|------|---------|-------|----------|--------|--------|-----------|
+| データモデル | UTXO | UTXO | UTXO | Account | Account+Owner | Account+ABCI | Multi-VM |
+| コンセンサス | PoW | PoW | PoW + GHOSTDAG | PoS | PoH + Tower BFT | Tendermint BFT | Snowball |
+| ブロック構造 | 線形 | 線形 | DAG | 線形 | Slot-Entry | 線形+Commit | Snowman/DAG |
+| ハッシュ | SHA256 | Double SHA256 | BLAKE2b | Keccak-256 | SHA256 | SHA256 | SHA256 |
+| 署名曲線 | P-256 | secp256k1 | secp256k1 | secp256k1 | Ed25519 | secp256k1/Ed25519 | secp256k1 |
+| ブロック時間 | 可変 | 10分 | 1秒 | 12秒 | 400ms | 1-7秒 | 1-2秒 |
+| ファイナリティ | 確率的 | 確率的 | 確率的 | 経済的 | 経済的 | 即時 | 確率的 |
 
 ## クイックスタート
 

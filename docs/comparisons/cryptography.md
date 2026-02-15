@@ -9,6 +9,7 @@
 | Kaspa | BLAKE2b | BLAKE2b | BLAKE2b |
 | Solana | SHA256 (PoH) | Ed25519公開鍵 | SHA256 |
 | Cosmos | SHA256 | Bech32 (secp256k1/Ed25519) | SHA256 |
+| Avalanche | SHA256 | CB58/Bech32 (secp256k1) | SHA256 |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -53,6 +54,7 @@
 | Kaspa | secp256k1 | ECDSA / Schnorr |
 | Solana | Ed25519 | EdDSA |
 | Cosmos | secp256k1 / Ed25519 | ECDSA / EdDSA |
+| Avalanche | secp256k1 | ECDSA |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -171,6 +173,33 @@ cosmos    1          pubkey_hash
 - cosmosvalcons... (コンセンサス)
 ```
 
+### CB58 / Bech32 (Avalanche)
+
+```
+チェーン別アドレスフォーマット:
+
+X-Chain (アセット転送):
+  X-avax1... (Bech32)
+  例: X-avax1k8yzttlmxfg0nkkhngrzpk35kp9ux3hvk7efg
+
+P-Chain (プラットフォーム):
+  P-avax1... (Bech32)
+  例: P-avax1k8yzttlmxfg0nkkhngrzpk35kp9ux3hvk7efg
+
+C-Chain (EVM):
+  0x... (Ethereum互換)
+  例: 0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC
+
+NodeID (バリデーター):
+  NodeID-... (CB58)
+  例: NodeID-7Xhw2mDxuDS44j42TCB6U5579esbSt3Lg
+
+特徴:
+- チェーンプレフィックスで用途を区別
+- C-Chain は Ethereum と互換
+- CB58 = Base58 with checksum
+```
+
 ## Merkle Trees
 
 ### Binary Merkle Tree (Bitcoin/Core)
@@ -216,3 +245,5 @@ Node = SHA256(left + right)
 | PDA (Solana) | `implementations/solana/src/program.rs` |
 | Block Hash (Cosmos) | `implementations/cosmos/src/types.rs` |
 | Vote/Commit (Cosmos) | `implementations/cosmos/src/consensus.rs` |
+| Validator Hash (Avalanche) | `implementations/avalanche/src/validator.rs` |
+| Snowball Choice (Avalanche) | `implementations/avalanche/src/snowball.rs` |
