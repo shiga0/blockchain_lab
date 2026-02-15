@@ -11,6 +11,7 @@
 | Multi-VM Subnet | Avalanche | チェーン別 (UTXO/Account/Custom) | 高 |
 | Extended UTXO | Cardano | UTXO + Datum + Multi-Asset | 高 |
 | Relay + Parachain | Polkadot | 共有セキュリティ + 独立状態 | 高 |
+| Object-centric | Sui | オブジェクト所有権 + PTB | 超高 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -511,16 +512,110 @@ pub struct AvailabilityBitfield(pub Vec<bool>);
 - パラチェーン数に上限あり（〜100）
 - 学習曲線（Substrate/WASM ランタイム）
 
+## Object-centric Model (Sui)
+
+### 概念
+
+Sui はアカウントではなくオブジェクトを中心としたモデル。オブジェクトの所有権が実行パスを決定。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Object Ownership Types                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  AddressOwner(address)     Shared { version }                   │
+│  ┌───────────────────┐     ┌───────────────────┐               │
+│  │ owner: 0xAlice    │     │ initial_ver: 5    │               │
+│  │ version: 42       │     │ version: 100      │               │
+│  └───────────────────┘     └───────────────────┘               │
+│           │                         │                           │
+│           ▼                         ▼                           │
+│    ┌─────────────┐          ┌─────────────────┐                │
+│    │  Fastpath   │          │   Consensus     │                │
+│    │ (即時実行)   │          │  (順序付け)      │                │
+│    └─────────────┘          └─────────────────┘                │
+│                                                                 │
+│  ObjectOwner(object_id)    Immutable                           │
+│  ┌───────────────────┐     ┌───────────────────┐               │
+│  │ parent: 0x123     │     │ frozen forever   │               │
+│  │ (子オブジェクト)  │     │ anyone can read  │               │
+│  └───────────────────┘     └───────────────────┘               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Programmable Transaction Blocks (PTB)
+
+```
+PTB は複数の操作を1トランザクションで合成:
+
+ProgrammableTransaction {
+  inputs: [
+    Pure(100),           // 金額
+    Object(coin_ref),    // コイン
+  ],
+  commands: [
+    SplitCoins(Input(1), [Input(0)]),   // コイン分割
+    TransferObjects([Result(0)], dest), // 転送
+  ],
+}
+
+Command 間で結果を受け渡し:
+  Command 0 の出力 → Result(0) → Command 1 の入力
+```
+
+### 実装 (Sui)
+
+```rust
+// implementations/sui/src/object.rs
+
+pub enum Owner {
+    AddressOwner(SuiAddress),      // 単一所有者 (Fastpath)
+    ObjectOwner(ObjectId),          // 親オブジェクト所有
+    Shared { initial_shared_version }, // 共有 (Consensus必要)
+    Immutable,                      // 不変 (誰でも参照可)
+}
+
+pub struct Object {
+    pub data: Data,                 // Move object or Package
+    pub owner: Owner,
+    pub previous_transaction: TransactionDigest,
+    pub storage_rebate: u64,
+}
+
+// implementations/sui/src/ptb.rs
+
+pub enum Command {
+    MoveCall { target, type_args, args },
+    TransferObjects { objects, recipient },
+    SplitCoins { coin, amounts },
+    MergeCoins { target, sources },
+    Publish { modules, dependencies },
+}
+```
+
+### 特徴
+
+**メリット:**
+- 超高並列性（オブジェクト独立性による）
+- Fastpath（Owned オブジェクトはコンセンサス不要）
+- PTB（複数操作を原子的に合成）
+- 決定論的ガス（実行前に計算可能）
+
+**デメリット:**
+- Move言語の学習コスト
+- オブジェクトモデルの理解が必要
+- Shared オブジェクトのボトルネック
+
 ## 比較表
 
-| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) | Parachain (DOT) |
-|------|------|---------------|---------------------|----------------------|-----------------|-------------|-----------------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン | パラ状態参照 |
-| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 | XCM/直接 |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) | ◎ (パラ独立) |
-| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) | ◎ (WASM) |
-| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) | パラ依存 |
-| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 | ランタイム |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) | Parachain (DOT) | Object (SUI) |
+|------|------|---------------|---------------------|----------------------|-----------------|-------------|-----------------|--------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン | パラ状態参照 | オブジェクト参照 |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 | XCM/直接 | TransferObjects |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) | ◎ (パラ独立) | ◎◎ (所有権分離) |
+| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) | ◎ (WASM) | ◎ (Move) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) | パラ依存 | △ (固定) |
+| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 | ランタイム | PTB合成 |
 
 ## 実装ファイル
 
@@ -539,3 +634,5 @@ pub struct AvailabilityBitfield(pub Vec<bool>);
 | Plutus (Cardano) | `implementations/cardano/src/plutus.rs` |
 | Parachain (Polkadot) | `implementations/polkadot/src/parachain.rs` |
 | XCM (Polkadot) | `implementations/polkadot/src/xcm.rs` |
+| Object (Sui) | `implementations/sui/src/object.rs` |
+| PTB (Sui) | `implementations/sui/src/ptb.rs` |

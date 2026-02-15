@@ -19,7 +19,8 @@ blockchain_lab/
 │   ├── cosmos/              # Cosmos風実装（Tendermint BFT + ABCI）
 │   ├── avalanche/           # Avalanche風実装（Snowball + Subnet）
 │   ├── cardano/             # Cardano風実装（Ouroboros + eUTXO + Plutus）
-│   └── polkadot/            # Polkadot風実装（BABE + GRANDPA + Parachains）
+│   ├── polkadot/            # Polkadot風実装（BABE + GRANDPA + Parachains）
+│   └── sui/                 # Sui風実装（Mysticeti + Object Model + PTB）
 ├── docs/
 │   └── comparisons/         # 比較ドキュメント
 └── experiments/             # 実験・ベンチマーク
@@ -27,15 +28,15 @@ blockchain_lab/
 
 ## 比較表
 
-| 観点 | Core | Bitcoin | Kaspa | Ethereum | Solana | Cosmos | Avalanche | Cardano | Polkadot |
-|------|------|---------|-------|----------|--------|--------|-----------|---------|----------|
-| データモデル | UTXO | UTXO | UTXO | Account | Account+Owner | Account+ABCI | Multi-VM | eUTXO | Relay+Para |
-| コンセンサス | PoW | PoW | PoW + GHOSTDAG | PoS | PoH + Tower BFT | Tendermint BFT | Snowball | Ouroboros | BABE+GRANDPA |
-| ブロック構造 | 線形 | 線形 | DAG | 線形 | Slot-Entry | 線形+Commit | Snowman/DAG | スロット | Relay+Para |
-| ハッシュ | SHA256 | Double SHA256 | BLAKE2b | Keccak-256 | SHA256 | SHA256 | SHA256 | BLAKE2b | BLAKE2-256 |
-| 署名曲線 | P-256 | secp256k1 | secp256k1 | secp256k1 | Ed25519 | secp256k1/Ed25519 | secp256k1 | Ed25519 | Sr25519 |
-| ブロック時間 | 可変 | 10分 | 1秒 | 12秒 | 400ms | 1-7秒 | 1-2秒 | 1秒 | 6秒 |
-| ファイナリティ | 確率的 | 確率的 | 確率的 | 経済的 | 経済的 | 即時 | 確率的 | 確率的 | 決定論的 |
+| 観点 | Core | Bitcoin | Kaspa | Ethereum | Solana | Cosmos | Avalanche | Cardano | Polkadot | Sui |
+|------|------|---------|-------|----------|--------|--------|-----------|---------|----------|-----|
+| データモデル | UTXO | UTXO | UTXO | Account | Account+Owner | Account+ABCI | Multi-VM | eUTXO | Relay+Para | Object-centric |
+| コンセンサス | PoW | PoW | PoW + GHOSTDAG | PoS | PoH + Tower BFT | Tendermint BFT | Snowball | Ouroboros | BABE+GRANDPA | Mysticeti DAG |
+| ブロック構造 | 線形 | 線形 | DAG | 線形 | Slot-Entry | 線形+Commit | Snowman/DAG | スロット | Relay+Para | Mysticeti DAG |
+| ハッシュ | SHA256 | Double SHA256 | BLAKE2b | Keccak-256 | SHA256 | SHA256 | SHA256 | BLAKE2b | BLAKE2-256 | BLAKE2b-256 |
+| 署名曲線 | P-256 | secp256k1 | secp256k1 | secp256k1 | Ed25519 | secp256k1/Ed25519 | secp256k1 | Ed25519 | Sr25519 | Multi (Ed25519等) |
+| ブロック時間 | 可変 | 10分 | 1秒 | 12秒 | 400ms | 1-7秒 | 1-2秒 | 1秒 | 6秒 | ~500ms |
+| ファイナリティ | 確率的 | 確率的 | 確率的 | 経済的 | 経済的 | 即時 | 確率的 | 確率的 | 決定論的 | 決定論的 |
 
 ## クイックスタート
 

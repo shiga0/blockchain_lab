@@ -11,6 +11,7 @@
 | Snowman Chain | Avalanche P/C-Chain | 1 | なし (Snowball) | 高 |
 | Slot-based | Cardano | 1 | 許容 (longest) | 中 |
 | Relay + Para | Polkadot | 1 (relay) + paras | GRANDPA収束 | 高 |
+| Mysticeti DAG | Sui | 複数 (round) | 全含む | 超高 |
 
 ## Linear Chain (Bitcoin/Ethereum/Core)
 
@@ -432,16 +433,92 @@ pub struct OccupiedCore {
 - **バッチファイナリティ**: GRANDPA が複数ブロックを一度に最終化
 - **フォーク解決**: BABE でフォーク許容、GRANDPA で収束
 
+## Mysticeti DAG (Sui)
+
+### 構造
+
+Sui の Mysticeti は各ラウンドで複数のバリデーターがブロックを提案する DAG 構造。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Mysticeti DAG Structure                       │
+│                                                                 │
+│  Round 3:    [B3_0]───────[B3_1]───────[B3_2]───────[B3_3]     │
+│                │  ╲         │  ╲         │  ╲         │        │
+│  Round 2:    [B2_0]───────[B2_1]───────[B2_2]───────[B2_3]     │
+│                │  ╲         │  ╲         │  ╲         │        │
+│  Round 1:    [B1_0]───────[B1_1]───────[B1_2]───────[B1_3]     │
+│                │           │           │           │            │
+│  Genesis:    [G_0]       [G_1]       [G_2]       [G_3]         │
+│                                                                 │
+│  各バリデーターがラウンドごとに1ブロック提案                   │
+│  ブロックは前ラウンドの複数ブロックを祖先として参照            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### ブロック構造
+
+```rust
+// implementations/sui/src/mysticeti.rs
+
+pub struct Block {
+    pub epoch: u64,
+    pub round: Round,
+    pub author: AuthorityIndex,
+    pub timestamp_ms: TimestampMs,
+    pub ancestors: Vec<BlockRef>,       // 複数の親
+    pub transactions: Vec<ConsensusTransaction>,
+    pub commit_votes: Vec<CommitVote>,  // 前リーダーへの投票
+    pub signature: [u8; 64],
+}
+
+pub struct BlockRef {
+    pub round: Round,
+    pub author: AuthorityIndex,
+    pub digest: BlockDigest,
+}
+
+pub struct Commit {
+    pub index: CommitIndex,
+    pub leader: BlockRef,
+    pub blocks: Vec<BlockRef>,  // コミットされた subdag
+}
+```
+
+### Wave ベースのコミット
+
+```
+3ラウンドを1 Wave として処理:
+
+Wave 0 (rounds 0-2):
+  Round 0: リーダー (validator 0) がブロック提案
+  Round 1: 他バリデーターがリーダーブロックを参照
+  Round 2: 2f+1 参照確認 → リーダーコミット
+
+Wave 1 (rounds 3-5):
+  Round 3: リーダー (validator 1) がブロック提案
+  ...
+
+コミット時、リーダーとその祖先の subdag 全体が順序付けされる
+```
+
+### 特徴
+
+- **高スループット**: 全バリデーターが各ラウンドでブロック提案
+- **低レイテンシ**: ~500ms ラウンド、~480ms ファイナリティ
+- **全ブロック活用**: DAG に含まれる全ブロックがコミット対象
+- **Wave ベース**: 3ラウンドごとにリーダー決定・コミット
+
 ## 比較表
 
-| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based | Relay+Para |
-|------|-------------|---------------|-----|------------|---------|------------|------------|
-| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 | BABE VRF |
-| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 | GRANDPA収束 |
-| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 | スロット+ラウンド |
-| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 | 高 |
-| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット | 6秒/スロット |
-| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 | 決定論的 (GRANDPA) |
+| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based | Relay+Para | Mysticeti |
+|------|-------------|---------------|-----|------------|---------|------------|------------|-----------|
+| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 | BABE VRF | 全員並列 |
+| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 | GRANDPA収束 | なし（全含） |
+| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 | スロット+ラウンド | Wave+subdag |
+| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 | 高 | 高 |
+| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット | 6秒/スロット | ~500ms |
+| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 | 決定論的 (GRANDPA) | 決定論的 |
 
 ## Tips vs Single Tip
 
@@ -480,3 +557,6 @@ Tips は複数存在可能（子を持たないブロック）
 | BABE (Polkadot) | `implementations/polkadot/src/babe.rs` |
 | GRANDPA (Polkadot) | `implementations/polkadot/src/grandpa.rs` |
 | Parachain (Polkadot) | `implementations/polkadot/src/parachain.rs` |
+| Mysticeti DAG (Sui) | `implementations/sui/src/mysticeti.rs` |
+| Object Model (Sui) | `implementations/sui/src/object.rs` |
+| PTB (Sui) | `implementations/sui/src/ptb.rs` |

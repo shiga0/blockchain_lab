@@ -12,6 +12,7 @@
 | Avalanche | SHA256 | CB58/Bech32 (secp256k1) | SHA256 |
 | Cardano | BLAKE2b-256 | Bech32 (Ed25519) | BLAKE2b-256 |
 | Polkadot | BLAKE2-256 | SS58 (Sr25519/Ed25519) | Binary Merkle |
+| Sui | BLAKE2b-256 | Bech32 (Ed25519/Secp256k1/Secp256r1) | BLAKE2b-256 |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -59,6 +60,7 @@
 | Avalanche | secp256k1 | ECDSA |
 | Cardano | Ed25519 | EdDSA + VRF |
 | Polkadot | Sr25519 / Ed25519 | Schnorr + VRF |
+| Sui | Ed25519 / Secp256k1 / Secp256r1 | EdDSA / ECDSA |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -295,6 +297,54 @@ Ed25519 との比較:
 └───────────────┴───────────────┴───────────────┘
 ```
 
+### Sui Address (Multi-Scheme)
+
+```
+Sui は複数の署名スキームをサポート:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Signature Schemes (flag byte):                               │
+├─────────────────────────────────────────────────────────────┤
+│ 0x00: Ed25519 (推奨)                                        │
+│ 0x01: Secp256k1 (Ethereum互換)                              │
+│ 0x02: Secp256r1/P-256 (Apple/WebAuthn互換)                  │
+│ 0x03: MultiSig                                               │
+│ 0x05: zkLogin                                                │
+└─────────────────────────────────────────────────────────────┘
+
+アドレス生成:
+  address = BLAKE2b-256(flag_byte || public_key)[0:32]
+
+フォーマット:
+  0x + 64 hex characters (32 bytes)
+  例: 0x5aef8ee6...c9d7a312
+
+特徴:
+- 複数署名方式を1アカウントで切り替え可能
+- zkLogin でソーシャルログイン対応
+- MultiSig で N-of-M 署名
+- Object アドレスも同じフォーマット
+```
+
+### Object ID と Transaction Digest (Sui)
+
+```
+Object ID (32 bytes):
+  新規オブジェクト: transaction_digest || creation_index
+  パッケージ: deployer_address || creation_index
+
+Transaction Digest (32 bytes):
+  BLAKE2b-256(transaction_data)
+
+BlockRef の Digest:
+  BLAKE2b-256(epoch || round || author || timestamp || ancestors || ...)
+
+特徴:
+- 全てのIDが32バイト統一
+- Object ID はコンテンツアドレッシング的
+- トランザクションは再実行可能（決定的）
+```
+
 ### VRF (Verifiable Random Function)
 
 ```
@@ -375,3 +425,6 @@ Node = SHA256(left + right)
 | BABE VRF (Polkadot) | `implementations/polkadot/src/babe.rs` |
 | GRANDPA Signatures (Polkadot) | `implementations/polkadot/src/grandpa.rs` |
 | Parachain Hashes (Polkadot) | `implementations/polkadot/src/parachain.rs` |
+| Object ID/Digest (Sui) | `implementations/sui/src/object.rs` |
+| Block Digest (Sui) | `implementations/sui/src/mysticeti.rs` |
+| Transaction Digest (Sui) | `implementations/sui/src/ptb.rs` |

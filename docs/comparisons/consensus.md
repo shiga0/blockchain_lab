@@ -12,6 +12,7 @@
 | Avalanche | Snowball | Probabilistic (~1-2 sec) | ~1-2 sec | Low |
 | Cardano | Ouroboros Praos | Probabilistic (~k slots) | 1 sec | Low |
 | Polkadot | BABE + GRANDPA | Deterministic (~12 sec) | 6 sec | Low |
+| Sui | Mysticeti (DAG) | Deterministic (~480ms) | ~500 ms | Low |
 | Core (base) | PoW (SHA256) | Probabilistic | Configurable | - |
 
 ## Proof of Work (PoW)
@@ -446,6 +447,74 @@ Tendermint BFT:              GRANDPA:
 - **フォーク耐性**: GRANDPAがチェーンを収束
 - **パラチェーン対応**: リレーチェーンがパラチェーンを調整
 
+## Mysticeti (Sui)
+
+### DAGベースBFTコンセンサス
+
+```
+Mysticeti は線形チェーンではなく DAG 構造を使用:
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    DAG Structure                                │
+│                                                                 │
+│  Round 3:    [B3_0]───────[B3_1]───────[B3_2]                  │
+│                │  ╲         │  ╲         │                     │
+│  Round 2:    [B2_0]───────[B2_1]───────[B2_2]                  │
+│                │  ╲         │  ╲         │                     │
+│  Round 1:    [B1_0]───────[B1_1]───────[B1_2]                  │
+│                                                                 │
+│  各ブロックは複数の祖先を参照（DAG、チェーンではない）         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Wave ベースのコミットメント
+
+```
+3ラウンドを1 Wave として処理:
+
+Wave W:
+┌─────────────────────────────────────────────────────────────────┐
+│ Round 3W   (リーダー):    リーダーがアンカーブロックを提案     │
+│ Round 3W+1 (投票):        バリデーターがリーダーブロックを参照 │
+│ Round 3W+2 (決定):        2f+1 参照でリーダーコミット          │
+└─────────────────────────────────────────────────────────────────┘
+
+Direct Rule: Round R+1 で 2f+1 がリーダーを参照 → コミット
+Indirect Rule: 祖先チェーン経由でコミット（Direct 失敗時）
+```
+
+### オブジェクト所有権による実行パス
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Owned Objects (Fastpath):                                       │
+│   クライアント → バリデーター → 即時実行 → Effects             │
+│            （コンセンサス不要）                                 │
+│                                                                 │
+│ Shared Objects (Consensus):                                     │
+│   クライアント → バリデーター → 認証 (2f+1) → コンセンサス     │
+│          → 順序付け → 実行 → Effects                           │
+└─────────────────────────────────────────────────────────────────┘
+
+Owned: 所有者のみ使用可 → 競合なし → Fastpath で高速処理
+Shared: 誰でも使用可 → 順序付け必要 → Mysticeti で順序決定
+```
+
+### 主要パラメータ
+
+| パラメータ | 値 | 説明 |
+|-----------|-----|------|
+| ラウンドタイムアウト | 500ms | コンセンサスラウンド間隔 |
+| チェックポイント間隔 | 200ms | 状態スナップショット |
+| エポック長 | ~24時間 | バリデーターローテーション |
+| BFT 閾値 | 2f+1 | クォーラム (n = 3f+1) |
+
+**特徴:**
+- **DAG 構造**: 並列ブロック生成、高スループット
+- **オブジェクト中心**: 所有権に基づく実行パス最適化
+- **Fastpath**: Owned オブジェクトはコンセンサス不要
+- **低レイテンシ**: ~480ms でファイナリティ
+
 ## 実装ファイル
 
 | Chain | File |
@@ -459,3 +528,4 @@ Tendermint BFT:              GRANDPA:
 | Avalanche | `implementations/avalanche/src/snowball.rs` |
 | Cardano | `implementations/cardano/src/ouroboros.rs` |
 | Polkadot | `implementations/polkadot/src/babe.rs`, `grandpa.rs` |
+| Sui | `implementations/sui/src/mysticeti.rs` |
