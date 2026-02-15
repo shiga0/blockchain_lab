@@ -12,6 +12,7 @@
 | Slot-based | Cardano | 1 | 許容 (longest) | 中 |
 | Relay + Para | Polkadot | 1 (relay) + paras | GRANDPA収束 | 高 |
 | Mysticeti DAG | Sui | 複数 (round) | 全含む | 超高 |
+| AptosBFT DAG | Aptos | 複数 (round) | 全含む | 超高 |
 
 ## Linear Chain (Bitcoin/Ethereum/Core)
 
@@ -509,16 +510,69 @@ Wave 1 (rounds 3-5):
 - **全ブロック活用**: DAG に含まれる全ブロックがコミット対象
 - **Wave ベース**: 3ラウンドごとにリーダー決定・コミット
 
+## AptosBFT DAG (Aptos)
+
+### 構造
+
+AptosBFT は DiemBFT/Jolteon から進化した DAG ベースのコンセンサス。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AptosBFT DAG Structure                        │
+│                                                                 │
+│  Round 3:    [N3_0]───────[N3_1]───────[N3_2]───────[N3_3]     │
+│                │  ╲         │  ╲         │  ╲         │        │
+│  Round 2:    [N2_0]───────[N2_1]───────[N2_2]───────[N2_3]     │
+│                │  ╲         │  ╲         │  ╲         │        │
+│  Round 1:    [N1_0]───────[N1_1]───────[N1_2]───────[N1_3]     │
+│                                                                 │
+│  Node = (epoch, round, author) + payload + 2f+1 parents       │
+│  CertifiedNode = Node + AggregateSignature                     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### ノード構造
+
+```rust
+// implementations/aptos/src/aptos_bft.rs
+
+pub struct Node {
+    pub metadata: NodeMetadata,
+    pub validator_txns: Vec<HashValue>,  // システムトランザクション
+    pub payload: Payload,                 // ユーザートランザクション
+    pub parents: Vec<NodeCertificate>,    // 2f+1 親証明書
+    pub signature: Signature,             // 提案者署名
+}
+
+pub struct NodeId {
+    pub epoch: u64,
+    pub round: u64,
+    pub author: AuthorityIndex,
+}
+
+pub struct NodeCertificate {
+    pub metadata: NodeMetadata,
+    pub signatures: AggregateSignature,  // 2f+1 署名
+}
+```
+
+### 特徴
+
+- **DAG 構造**: Mysticeti と同様に並列ノード提案
+- **Strong Links**: 各ノードは前ラウンドの 2f+1 ノードを参照
+- **Block-STM**: 楽観的並列実行エンジンと組み合わせ
+- **~1秒ファイナリティ**: 高速なコンセンサス
+
 ## 比較表
 
-| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based | Relay+Para | Mysticeti |
-|------|-------------|---------------|-----|------------|---------|------------|------------|-----------|
-| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 | BABE VRF | 全員並列 |
-| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 | GRANDPA収束 | なし（全含） |
-| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 | スロット+ラウンド | Wave+subdag |
-| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 | 高 | 高 |
-| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット | 6秒/スロット | ~500ms |
-| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 | 決定論的 (GRANDPA) | 決定論的 |
+| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based | Relay+Para | Mysticeti | AptosBFT |
+|------|-------------|---------------|-----|------------|---------|------------|------------|-----------|----------|
+| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 | BABE VRF | 全員並列 | 全員並列 |
+| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 | GRANDPA収束 | なし（全含） | なし（全含） |
+| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 | スロット+ラウンド | Wave+subdag | Round順 |
+| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 | 高 | 高 | 高 |
+| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット | 6秒/スロット | ~500ms | ~1秒 |
+| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 | 決定論的 (GRANDPA) | 決定論的 | 決定論的 |
 
 ## Tips vs Single Tip
 
@@ -560,3 +614,6 @@ Tips は複数存在可能（子を持たないブロック）
 | Mysticeti DAG (Sui) | `implementations/sui/src/mysticeti.rs` |
 | Object Model (Sui) | `implementations/sui/src/object.rs` |
 | PTB (Sui) | `implementations/sui/src/ptb.rs` |
+| AptosBFT DAG (Aptos) | `implementations/aptos/src/aptos_bft.rs` |
+| Block-STM (Aptos) | `implementations/aptos/src/block_stm.rs` |
+| Account (Aptos) | `implementations/aptos/src/account.rs` |

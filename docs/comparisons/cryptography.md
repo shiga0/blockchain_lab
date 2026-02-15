@@ -13,6 +13,7 @@
 | Cardano | BLAKE2b-256 | Bech32 (Ed25519) | BLAKE2b-256 |
 | Polkadot | BLAKE2-256 | SS58 (Sr25519/Ed25519) | Binary Merkle |
 | Sui | BLAKE2b-256 | Bech32 (Ed25519/Secp256k1/Secp256r1) | BLAKE2b-256 |
+| Aptos | SHA256/SHA3 | Hex (Ed25519/Secp256k1/MultiSig) | SHA256 |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -61,6 +62,7 @@
 | Cardano | Ed25519 | EdDSA + VRF |
 | Polkadot | Sr25519 / Ed25519 | Schnorr + VRF |
 | Sui | Ed25519 / Secp256k1 / Secp256r1 | EdDSA / ECDSA |
+| Aptos | Ed25519 / Secp256k1 / MultiEd25519 | EdDSA / ECDSA |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -345,6 +347,33 @@ BlockRef の Digest:
 - トランザクションは再実行可能（決定的）
 ```
 
+### Aptos Address
+
+```
+Aptos は複数の署名スキームをサポート:
+
+┌─────────────────────────────────────────────────────────────┐
+│ Authentication Schemes:                                      │
+├─────────────────────────────────────────────────────────────┤
+│ Ed25519: 標準的な EdDSA 署名                                │
+│ MultiEd25519: 閾値署名 (N-of-M)                             │
+│ Secp256k1: Ethereum 互換                                    │
+└─────────────────────────────────────────────────────────────┘
+
+アドレス生成:
+  address = SHA3-256(public_key || scheme_byte)[0:32]
+
+フォーマット:
+  0x + 64 hex characters (32 bytes)
+  例: 0x1234567890abcdef...
+
+特徴:
+- 32バイト固定長アドレス
+- シーケンス番号でリプレイ保護
+- マルチシグネイティブサポート
+- Sui と異なり全 TX がコンセンサス経由
+```
+
 ### VRF (Verifiable Random Function)
 
 ```
@@ -428,3 +457,5 @@ Node = SHA256(left + right)
 | Object ID/Digest (Sui) | `implementations/sui/src/object.rs` |
 | Block Digest (Sui) | `implementations/sui/src/mysticeti.rs` |
 | Transaction Digest (Sui) | `implementations/sui/src/ptb.rs` |
+| Account/Auth (Aptos) | `implementations/aptos/src/account.rs` |
+| Node Digest (Aptos) | `implementations/aptos/src/aptos_bft.rs` |

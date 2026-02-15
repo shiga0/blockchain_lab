@@ -13,6 +13,7 @@
 | Cardano | Ouroboros Praos | Probabilistic (~k slots) | 1 sec | Low |
 | Polkadot | BABE + GRANDPA | Deterministic (~12 sec) | 6 sec | Low |
 | Sui | Mysticeti (DAG) | Deterministic (~480ms) | ~500 ms | Low |
+| Aptos | AptosBFT (DAG) | Deterministic (~1 sec) | ~1 sec | Low |
 | Core (base) | PoW (SHA256) | Probabilistic | Configurable | - |
 
 ## Proof of Work (PoW)
@@ -515,6 +516,121 @@ Shared: 誰でも使用可 → 順序付け必要 → Mysticeti で順序決定
 - **Fastpath**: Owned オブジェクトはコンセンサス不要
 - **低レイテンシ**: ~480ms でファイナリティ
 
+## AptosBFT (Aptos)
+
+### DAGベースBFTコンセンサス
+
+```
+AptosBFT は DiemBFT/Jolteon から進化した DAG ベースのコンセンサス:
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    AptosBFT DAG Structure                        │
+│                                                                 │
+│  Round 3:    [N3_0]───────[N3_1]───────[N3_2]───────[N3_3]     │
+│                │  ╲         │  ╲         │  ╲         │        │
+│  Round 2:    [N2_0]───────[N2_1]───────[N2_2]───────[N2_3]     │
+│                │  ╲         │  ╲         │  ╲         │        │
+│  Round 1:    [N1_0]───────[N1_1]───────[N1_2]───────[N1_3]     │
+│                                                                 │
+│  各バリデーターがラウンドごとに1ノード提案                     │
+│  ノードは前ラウンドの 2f+1 親を参照 (Strong Links)              │
+└─────────────────────────────────────────────────────────────────┘
+
+Node 構造:
+  - NodeId: (epoch, round, author)
+  - Payload: トランザクション
+  - Parents: 2f+1 NodeCertificates
+  - Signature: 提案者の署名
+
+NodeCertificate:
+  - NodeMetadata: (NodeId, timestamp, digest)
+  - AggregateSignature: 2f+1 バリデーターの署名
+```
+
+### ノード認証と投票
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Node Certification Flow                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  1. Validator A がノードを提案                                  │
+│     Node(round=R, author=A, parents=[...])                      │
+│                         │                                       │
+│                         ▼                                       │
+│  2. 他のバリデーターがノードを検証・投票                        │
+│     Vote(metadata, signature)                                   │
+│                         │                                       │
+│                         ▼                                       │
+│  3. 2f+1 投票を集約 → NodeCertificate                           │
+│     AggregateSignature(signers_bitmap, signature)               │
+│                         │                                       │
+│                         ▼                                       │
+│  4. CertifiedNode を DAG に追加                                 │
+│     次ラウンドの親として使用可能                                │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Block-STM 並列実行
+
+```
+Block-STM は楽観的並列実行エンジン:
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    Block-STM Execution                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Input: [tx_0, tx_1, tx_2, ..., tx_n]                          │
+│                                                                 │
+│  1. 並列実行フェーズ                                            │
+│     - 全トランザクションを楽観的に並列実行                      │
+│     - 各 tx は incarnation 0 から開始                          │
+│     - MVHashMap に read/write を記録                            │
+│                                                                 │
+│  2. 検証フェーズ                                                │
+│     - read set の version をチェック                            │
+│     - 矛盾があればトランザクションを abort                     │
+│     - incarnation++ で再実行                                    │
+│                                                                 │
+│  3. コミット                                                    │
+│     - 全 tx が validated → ブロックコミット                     │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ MVHashMap (Multi-Version Data Structure)               │    │
+│  │                                                         │    │
+│  │ key: address || path                                    │    │
+│  │ value: [(txn_idx=0, inc=0, val=X),                     │    │
+│  │         (txn_idx=2, inc=0, val=Y),                     │    │
+│  │         (txn_idx=2, inc=1, val=Z), ...]                │    │
+│  │                                                         │    │
+│  │ 読み取り: txn_idx より前の最新値を返す                  │    │
+│  │ ESTIMATE マーカー: 依存関係を示す                       │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+Incarnation:
+  - 各トランザクションの実行回数
+  - 競合検出 → abort → incarnation++ → 再実行
+  - 依存関係解決まで繰り返し
+```
+
+### 主要パラメータ
+
+| パラメータ | 値 | 説明 |
+|-----------|-----|------|
+| ブロック時間 | ~1 sec | ブロック生成間隔 |
+| エポック長 | ~2 hours | バリデーターローテーション |
+| BFT 閾値 | 2f+1 | クォーラム (n = 3f+1) |
+| Max Gas/Block | 100M | ブロックあたり最大 Gas |
+
+**特徴:**
+- **DAG 構造**: 各バリデーターが並列にノード提案
+- **Block-STM**: 楽観的並列実行で高スループット
+- **Move VM**: リソース指向プログラミング
+- **低レイテンシ**: ~1秒でファイナリティ
+
 ## 実装ファイル
 
 | Chain | File |
@@ -529,3 +645,4 @@ Shared: 誰でも使用可 → 順序付け必要 → Mysticeti で順序決定
 | Cardano | `implementations/cardano/src/ouroboros.rs` |
 | Polkadot | `implementations/polkadot/src/babe.rs`, `grandpa.rs` |
 | Sui | `implementations/sui/src/mysticeti.rs` |
+| Aptos | `implementations/aptos/src/aptos_bft.rs`, `block_stm.rs` |

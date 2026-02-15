@@ -11,6 +11,7 @@ members = [
     "implementations/cardano",
     "implementations/polkadot",
     "implementations/sui",
+    "implementations/aptos",
 ]
 
 [workspace.package]

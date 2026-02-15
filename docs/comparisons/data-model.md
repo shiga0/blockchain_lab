@@ -12,6 +12,7 @@
 | Extended UTXO | Cardano | UTXO + Datum + Multi-Asset | 高 |
 | Relay + Parachain | Polkadot | 共有セキュリティ + 独立状態 | 高 |
 | Object-centric | Sui | オブジェクト所有権 + PTB | 超高 |
+| Account + Resource | Aptos | アカウント + Move リソース | 超高 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -606,16 +607,149 @@ pub enum Command {
 - オブジェクトモデルの理解が必要
 - Shared オブジェクトのボトルネック
 
+## Account + Resource Model (Aptos)
+
+### 概念
+
+```
+Aptos は Move 言語のリソースモデルを採用:
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Account (0x1234...abcd)                                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Resources:                                                             │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ 0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>                │   │
+│  │   └── coin: Coin { value: 1000000 }                             │   │
+│  │   └── frozen: false                                             │   │
+│  │   └── deposit_events: EventHandle { ... }                       │   │
+│  │   └── withdraw_events: EventHandle { ... }                      │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ 0x1::account::Account                                           │   │
+│  │   └── authentication_key: 0x1234...                             │   │
+│  │   └── sequence_number: 42                                       │   │
+│  │   └── coin_register_events: EventHandle { ... }                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  Modules (published code):                                              │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ my_module (bytecode)                                            │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+リソース: (address, type) でグローバルストレージにアクセス
+  - get_resource<T>(address) -> T
+  - move_to(signer, resource)
+  - move_from<T>(address) -> T
+```
+
+### Sui との違い
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Aptos vs Sui                                          │
+├───────────────────────────────────┬─────────────────────────────────────┤
+│            Aptos                  │              Sui                    │
+├───────────────────────────────────┼─────────────────────────────────────┤
+│ Account-centric                   │ Object-centric                      │
+│ Resources under accounts          │ Objects are first-class             │
+│ Global storage: (addr, type)      │ Object ID: unique identifier        │
+│ Sequence number for replay        │ Object version for replay           │
+│ Block-STM parallel execution      │ Fastpath + Mysticeti                │
+│ All txs go through consensus      │ Owned objects skip consensus        │
+│ Move (original)                   │ Move (Sui variant)                  │
+└───────────────────────────────────┴─────────────────────────────────────┘
+```
+
+### Block-STM 並列実行
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Block-STM Execution Model                             │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  Transaction Block: [tx_0, tx_1, tx_2, tx_3, ...]                      │
+│                                                                         │
+│  1. Optimistic Execution (全 TX を並列実行)                             │
+│     ┌────┐  ┌────┐  ┌────┐  ┌────┐                                     │
+│     │tx_0│  │tx_1│  │tx_2│  │tx_3│  ... (並列)                         │
+│     └──┬─┘  └──┬─┘  └──┬─┘  └──┬─┘                                     │
+│        │       │       │       │                                        │
+│        ▼       ▼       ▼       ▼                                        │
+│     MVHashMap に read/write を記録                                      │
+│                                                                         │
+│  2. Validation (read set の整合性チェック)                              │
+│     tx_1 が tx_0 の書き込みを読んだ？                                  │
+│     → 読んだ値の version が変わっていないか確認                        │
+│                                                                         │
+│  3. Conflict → Re-execution                                             │
+│     incarnation++ → 再実行 → 再検証                                     │
+│                                                                         │
+│  4. All Validated → Commit                                              │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+MVHashMap (Multi-Version HashMap):
+  key = (address, path)
+  value = [(txn_idx, incarnation, value), ...]
+
+  読み取り: 自身より前の最新値を返す
+  ESTIMATE: 依存関係マーカー（再実行中の値）
+```
+
+### トランザクション構造
+
+```rust
+// RawTransaction
+pub struct RawTransaction {
+    sender: Address,
+    sequence_number: u64,  // replay protection
+    payload: TransactionPayload,
+    max_gas_amount: u64,
+    gas_unit_price: u64,
+    expiration_timestamp_secs: u64,
+    chain_id: u8,
+}
+
+// TransactionPayload
+enum TransactionPayload {
+    EntryFunction {
+        module: ModuleId,    // e.g., 0x1::coin
+        function: String,    // e.g., "transfer"
+        ty_args: Vec<TypeTag>,
+        args: Vec<Vec<u8>>,  // BCS-encoded
+    },
+    ModuleBundle(Vec<Vec<u8>>),
+    Multisig { ... },
+}
+```
+
+### 特徴
+
+**メリット:**
+- 超高スループット (Block-STM による楽観的並列実行)
+- Move 言語のリソース安全性
+- 低レイテンシ (~1秒ファイナリティ)
+- 複数署名スキーム対応 (Ed25519, Secp256k1, MultiSig)
+
+**デメリット:**
+- Move 言語の学習コスト
+- 全トランザクションがコンセンサス経由 (Sui の Fastpath なし)
+- 競合時の再実行オーバーヘッド
+
 ## 比較表
 
-| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) | Parachain (DOT) | Object (SUI) |
-|------|------|---------------|---------------------|----------------------|-----------------|-------------|-----------------|--------------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン | パラ状態参照 | オブジェクト参照 |
-| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 | XCM/直接 | TransferObjects |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) | ◎ (パラ独立) | ◎◎ (所有権分離) |
-| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) | ◎ (WASM) | ◎ (Move) |
-| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) | パラ依存 | △ (固定) |
-| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 | ランタイム | PTB合成 |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) | Parachain (DOT) | Object (SUI) | Resource (APT) |
+|------|------|---------------|---------------------|----------------------|-----------------|-------------|-----------------|--------------|----------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン | パラ状態参照 | オブジェクト参照 | リソース参照 |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 | XCM/直接 | TransferObjects | coin::transfer |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) | ◎ (パラ独立) | ◎◎ (所有権分離) | ◎◎ (Block-STM) |
+| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) | ◎ (WASM) | ◎ (Move) | ◎ (Move) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) | パラ依存 | △ (固定) | △ (固定) |
+| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 | ランタイム | PTB合成 | Resource分離 |
 
 ## 実装ファイル
 
@@ -636,3 +770,5 @@ pub enum Command {
 | XCM (Polkadot) | `implementations/polkadot/src/xcm.rs` |
 | Object (Sui) | `implementations/sui/src/object.rs` |
 | PTB (Sui) | `implementations/sui/src/ptb.rs` |
+| Account (Aptos) | `implementations/aptos/src/account.rs` |
+| Block-STM (Aptos) | `implementations/aptos/src/block_stm.rs` |
