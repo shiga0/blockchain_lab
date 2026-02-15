@@ -13,6 +13,7 @@
 | Relay + Parachain | Polkadot | 共有セキュリティ + 独立状態 | 高 |
 | Object-centric | Sui | オブジェクト所有権 + PTB | 超高 |
 | Account + Resource | Aptos | アカウント + Move リソース | 超高 |
+| Privacy UTXO | Monero | Ring + Commitment + Key Image | 高 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -740,16 +741,215 @@ enum TransactionPayload {
 - 全トランザクションがコンセンサス経由 (Sui の Fastpath なし)
 - 競合時の再実行オーバーヘッド
 
+## Privacy UTXO Model (Monero)
+
+### 概念
+
+Monero は UTXO ベースだが、全ての出力と金額がプライバシー保護される。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Bitcoin UTXO:              │ Monero Privacy UTXO:              │
+├─────────────────────────────────────────────────────────────────┤
+│ TxOut {                    │ TxOut {                           │
+│   value: 1.5 BTC (明示)    │   amount: 0 (隠蔽)                │
+│   script: P2PKH(Alice)     │   target: OneTimeKey(P)           │
+│ }                          │ }                                 │
+│                            │ + RingCT {                        │
+│                            │   commitment: C = m*G + a*H       │
+│                            │   encrypted_amount: enc(amount)   │
+│                            │   range_proof: Bulletproof        │
+│                            │ }                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### プライバシー層
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Monero Privacy Stack                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  送信者プライバシー (Ring Signatures):                          │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ Input: "Ring の誰かが使用した" (16 個のデコイ + 1 本物)   │ │
+│  │ Key Image: 二重使用検出のみ、使用元は隠蔽                 │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  受信者プライバシー (Stealth Addresses):                        │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ Output: One-time Public Key (毎回異なる)                  │ │
+│  │ 同じ受信者への支払いでもアドレスが異なる                  │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│  金額プライバシー (RingCT):                                     │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ Commitment: C = mask*G + amount*H (金額を隠す)            │ │
+│  │ Bulletproof: 0 <= amount < 2^64 を証明                    │ │
+│  │ Balance: Sum(inputs) = Sum(outputs) + fee を検証可能      │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### トランザクション構造
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Transaction:                                                     │
+├─────────────────────────────────────────────────────────────────┤
+│ TransactionPrefix:                                              │
+│   version: 2                                                    │
+│   unlock_time: 0                                                │
+│   inputs: [                                                     │
+│     TxIn::ToKey {                                               │
+│       amount: 0,                 // 常に 0 (RingCT)             │
+│       key_offsets: [12, 35, 8],  // Ring member の相対オフセット│
+│       key_image: KeyImage(I),    // 二重使用防止                │
+│     }                                                           │
+│   ],                                                            │
+│   outputs: [                                                    │
+│     TxOut {                                                     │
+│       amount: 0,                 // 常に 0 (RingCT)             │
+│       target: ToKey(P),          // One-time public key         │
+│     }                                                           │
+│   ],                                                            │
+│   extra: [tx_public_key, ...]    // R = r*G                     │
+│                                                                 │
+│ RctSignatures:                                                  │
+│   rct_type: CLSAG               // 署名タイプ                  │
+│   txn_fee: 10000                // 手数料 (公開)                │
+│   ecdh_info: [encrypted_amounts]// 受信者用暗号化金額          │
+│   out_pk: [commitments]         // 出力コミットメント          │
+│   bulletproofs: [proof]         // 範囲証明                    │
+│   clsags: [signature]           // Ring 署名                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Image による二重使用防止
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Key Image System                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Key Image: I = x * Hp(P)                                       │
+│    x: 出力の秘密鍵                                              │
+│    P: 出力の公開鍵 (One-time key)                               │
+│    Hp: Hash-to-point 関数                                       │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ 出力 #5 の Key Image は一意                              │   │
+│  │ (同じ出力を使おうとすると同じ Key Image)                 │   │
+│  │                                                         │   │
+│  │ しかし Key Image から出力 #5 を特定することは不可能     │   │
+│  │ (Ring の誰が使用したか分からない)                       │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  検証フロー:                                                    │
+│    1. グローバル Key Image セットを維持                         │
+│    2. 新 TX の Key Image がセットに存在 → 拒否 (二重使用)      │
+│    3. 存在しない → 承認、Key Image をセットに追加              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### ウォレットスキャン
+
+```
+受信者のウォレットスキャン (View Key のみで可能):
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. 各ブロックの各 TX を取得                                     │
+│                                                                 │
+│ 2. TX Public Key (R) を取得                                     │
+│                                                                 │
+│ 3. Shared Secret を計算: derivation = a*R                       │
+│                                                                 │
+│ 4. View Tag チェック (最適化)                                   │
+│    view_tag = H("view_tag" || derivation || i)[0]               │
+│    一致しなければスキップ (1/256 の確率でのみ完全計算)         │
+│                                                                 │
+│ 5. Expected One-time Key を計算                                 │
+│    P' = H(derivation || i)*G + B                                │
+│                                                                 │
+│ 6. P' == 出力の P なら「自分宛て」                              │
+│                                                                 │
+│ 7. 金額を復号: amount = decrypt(ecdh_info, derivation)          │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 実装 (Monero)
+
+```rust
+// implementations/monero/src/cryptonote.rs
+
+pub struct TxIn {
+    Gen { height },           // Coinbase
+    ToKey {
+        amount: u64,          // 0 for RingCT
+        key_offsets: Vec<u64>,
+        key_image: KeyImage,
+    }
+}
+
+pub struct TxOut {
+    pub amount: u64,          // 0 for RingCT
+    pub target: TxOutTarget,  // One-time public key
+}
+
+// implementations/monero/src/ringct.rs
+
+pub struct RctSig {
+    pub rct_type: RctType,
+    pub txn_fee: u64,
+    pub pseudo_outs: Vec<Commitment>,
+    pub ecdh_info: Vec<EcdhTuple>,
+    pub out_pk: Vec<CtKey>,
+    pub bulletproofs: Vec<Bulletproof>,
+    pub clsags: Vec<ClsagSignature>,
+}
+
+// implementations/monero/src/stealth.rs
+
+pub fn generate_one_time_public_key(
+    tx_private_key: &SecretKey,
+    receiver_address: &AccountAddress,
+    output_index: usize,
+) -> PublicKey;
+
+pub fn is_output_to_account(
+    output: &StealthOutput,
+    account_keys: &AccountKeys,
+) -> bool;
+```
+
+### 特徴
+
+**メリット:**
+- 完全なトランザクションプライバシー（送信者、受信者、金額）
+- UTXO の並列性を維持
+- プロトコルレベルでプライバシーを強制（オプトアウト不可）
+- Key Image で二重使用を防止しつつ使用元を隠蔽
+
+**デメリット:**
+- トランザクションサイズが大きい（Bulletproof + Ring Signature）
+- ウォレットスキャンが重い（全ブロックスキャン必要）
+- スマートコントラクトが困難（プライバシー維持が複雑）
+- 規制対応が難しい（トレース不可）
+
 ## 比較表
 
-| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) | Parachain (DOT) | Object (SUI) | Resource (APT) |
-|------|------|---------------|---------------------|----------------------|-----------------|-------------|-----------------|--------------|----------------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン | パラ状態参照 | オブジェクト参照 | リソース参照 |
-| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 | XCM/直接 | TransferObjects | coin::transfer |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) | ◎ (パラ独立) | ◎◎ (所有権分離) | ◎◎ (Block-STM) |
-| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) | ◎ (WASM) | ◎ (Move) | ◎ (Move) |
-| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) | パラ依存 | △ (固定) | △ (固定) |
-| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 | ランタイム | PTB合成 | Resource分離 |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) | Parachain (DOT) | Object (SUI) | Resource (APT) | Privacy (XMR) |
+|------|------|---------------|---------------------|----------------------|-----------------|-------------|-----------------|--------------|----------------|---------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン | パラ状態参照 | オブジェクト参照 | リソース参照 | 全ブロックスキャン |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 | XCM/直接 | TransferObjects | coin::transfer | Ring + Stealth |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) | ◎ (パラ独立) | ◎◎ (所有権分離) | ◎◎ (Block-STM) | ◎ (TX独立) |
+| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) | ◎ (WASM) | ◎ (Move) | ◎ (Move) | × (なし) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) | パラ依存 | △ (固定) | △ (固定) | ◎◎ (完全) |
+| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 | ランタイム | PTB合成 | Resource分離 | 結合+暗号 |
 
 ## 実装ファイル
 
@@ -772,3 +972,6 @@ enum TransactionPayload {
 | PTB (Sui) | `implementations/sui/src/ptb.rs` |
 | Account (Aptos) | `implementations/aptos/src/account.rs` |
 | Block-STM (Aptos) | `implementations/aptos/src/block_stm.rs` |
+| CryptoNote (Monero) | `implementations/monero/src/cryptonote.rs` |
+| RingCT (Monero) | `implementations/monero/src/ringct.rs` |
+| Stealth (Monero) | `implementations/monero/src/stealth.rs` |

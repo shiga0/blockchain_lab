@@ -1,0 +1,19 @@
+[package]
+name = "blockchain-lab-monero"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Monero-style (CryptoNote + RingCT + Bulletproofs) blockchain implementation"
+
+[dependencies]
+blockchain-lab-core.workspace = true
+serde.workspace = true
+sha2.workspace = true
+rand.workspace = true
+log.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+
+[features]
+default = []

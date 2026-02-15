@@ -14,6 +14,7 @@
 | Polkadot | BLAKE2-256 | SS58 (Sr25519/Ed25519) | Binary Merkle |
 | Sui | BLAKE2b-256 | Bech32 (Ed25519/Secp256k1/Secp256r1) | BLAKE2b-256 |
 | Aptos | SHA256/SHA3 | Hex (Ed25519/Secp256k1/MultiSig) | SHA256 |
+| Monero | Keccak-256 | Base58 (Ed25519) + Stealth | Keccak-256 |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -63,6 +64,7 @@
 | Polkadot | Sr25519 / Ed25519 | Schnorr + VRF |
 | Sui | Ed25519 / Secp256k1 / Secp256r1 | EdDSA / ECDSA |
 | Aptos | Ed25519 / Secp256k1 / MultiEd25519 | EdDSA / ECDSA |
+| Monero | Ed25519 (Curve25519) | Ring Signatures / CLSAG |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -402,6 +404,201 @@ VRF_verify(public_key, input, output, proof) → bool
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Monero プライバシー暗号技術
+
+### Ring Signatures (送信者匿名化)
+
+```
+Ring Signature の概念:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 通常の署名:                                                      │
+│   署名者 A → 署名 → 検証者は「A が署名した」と分かる            │
+│                                                                 │
+│ Ring Signature:                                                 │
+│   署名者 A は Ring {A, B, C, D, ...} の一員として署名           │
+│   検証者は「Ring の誰かが署名した」としか分からない             │
+└─────────────────────────────────────────────────────────────────┘
+
+Monero の実装 (CLSAG - Concise Linkable Spontaneous Anonymous Group):
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 入力: Output #5 を使用したい                                    │
+│                                                                 │
+│ Ring メンバー: [Output #12, #47, #5, #89, ..., #234]            │
+│               （16個のデコイ + 1つの本物）                      │
+│                                                                 │
+│ 署名が証明すること:                                             │
+│   1. Ring メンバーのどれかが使用されている                      │
+│   2. 署名者はその秘密鍵を知っている                            │
+│   3. どれが本物かは特定できない                                │
+│                                                                 │
+│ Key Image: I = x * Hp(P)                                        │
+│   - 各出力に対して一意                                          │
+│   - 二重使用を防止（同じ Key Image は拒否）                    │
+│   - どの出力が使用されたかは隠す                               │
+└─────────────────────────────────────────────────────────────────┘
+
+CLSAG 構造:
+  signatures: [s_0, s_1, ..., s_{n-1}]  # 各 Ring メンバーの応答
+  c1: challenge                          # 初期チャレンジ
+  D: commitment to signing key           # 署名鍵へのコミットメント
+```
+
+### Stealth Addresses (受信者匿名化)
+
+```
+Dual-Key システム:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 受信者のアドレス:                                               │
+│   View Key: (a, A = a*G)    # 入金確認用                        │
+│   Spend Key: (b, B = b*G)   # 出金用                            │
+│   Address = (A, B)                                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ 送金フロー:                                                     │
+│                                                                 │
+│ 1. 送信者がランダムな r を生成                                  │
+│    R = r * G (トランザクション公開鍵)                          │
+│                                                                 │
+│ 2. 送信者が One-Time Public Key を計算                          │
+│    P = Hs(r*A) * G + B                                          │
+│       ↑ 受信者の View Key と r から共有秘密を導出              │
+│                                                                 │
+│ 3. 受信者がスキャン                                             │
+│    P' = Hs(a*R) * G + B                                         │
+│    P' == P なら「自分宛て」                                     │
+│                                                                 │
+│ 4. 受信者が Spend Key を導出                                    │
+│    x = Hs(a*R) + b (秘密鍵)                                     │
+│    x * G == P を確認                                            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+View Tag (最適化):
+  - Hs("view_tag" || derivation || i) の最初の 1 バイト
+  - 約 1/256 の確率でのみ完全計算が必要
+  - ウォレットスキャン速度を大幅に改善
+```
+
+### RingCT / Pedersen Commitments (金額隠蔽)
+
+```
+Pedersen Commitment:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ C = mask * G + amount * H                                       │
+│                                                                 │
+│ G, H: 独立した生成点 (H = hash_to_point(G))                    │
+│ mask: ランダムなブラインディングファクター (32 bytes)          │
+│ amount: 実際の金額                                              │
+│                                                                 │
+│ 特性:                                                           │
+│   - C から amount を導出不可能 (perfectly hiding)               │
+│   - 同じ amount でも異なる mask で異なる C                      │
+│   - 加法準同型: C1 + C2 = (mask1 + mask2)*G + (amt1 + amt2)*H  │
+└─────────────────────────────────────────────────────────────────┘
+
+トランザクションバランス検証:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Input Commitments:  C_in1 + C_in2 + ...                         │
+│ Output Commitments: C_out1 + C_out2 + ... + fee*H               │
+│                                                                 │
+│ 検証: Sum(C_in) == Sum(C_out) + fee*H                           │
+│                                                                 │
+│ これは以下を証明:                                               │
+│   sum(input_amounts) == sum(output_amounts) + fee               │
+│   金額を公開せずに                                              │
+└─────────────────────────────────────────────────────────────────┘
+
+ECDH 暗号化 (受信者への金額通知):
+  encrypted_amount = amount XOR Hs("ecdh_amount" || shared_secret)
+  encrypted_mask = mask XOR Hs("ecdh_mask" || shared_secret)
+```
+
+### Bulletproofs (Range Proofs)
+
+```
+Range Proof の目的:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 問題: Pedersen Commitment は負の金額も隠せる                    │
+│       攻撃者が -100 XMR + 200 XMR = 100 XMR として              │
+│       200 XMR を盗む可能性                                      │
+│                                                                 │
+│ 解決: Range Proof で 0 <= amount < 2^64 を証明                  │
+│       金額を明かさずに                                          │
+└─────────────────────────────────────────────────────────────────┘
+
+Bulletproofs の特徴:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ 旧方式 (Borromean):          Bulletproofs:                      │
+│   ~6KB / output              ~0.7KB (固定)                      │
+│   線形サイズ                 対数サイズ                         │
+│                                                                 │
+│ Bulletproofs+ (最新):                                           │
+│   さらに ~15% サイズ削減                                        │
+│   検証速度も向上                                                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ 数学的基盤:                                                     │
+│   - Inner Product Argument                                      │
+│   - 対数回の通信でベクトル内積を証明                           │
+│   - Zero-Knowledge: 証明者の秘密は隠される                     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Image (二重使用防止)
+
+```
+Key Image の構造:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ I = x * Hp(P)                                                   │
+│                                                                 │
+│ x: 出力の秘密鍵 (spending key)                                  │
+│ P: 出力の公開鍵 (one-time public key)                          │
+│ Hp: point にハッシュする関数                                    │
+│                                                                 │
+│ 特性:                                                           │
+│   - 各出力に対して一意 (同じ出力 = 同じ Key Image)              │
+│   - 出力が実際に使用されたかは隠す (Ring 内のどれか不明)       │
+│   - Key Image の集合をチェックすれば二重使用を検出              │
+└─────────────────────────────────────────────────────────────────┘
+
+検証フロー:
+  1. トランザクション受信
+  2. 各入力の Key Image を抽出
+  3. グローバル Key Image セットと照合
+  4. 重複があれば拒否 (二重使用)
+  5. なければトランザクション承認、Key Image を追加
+```
+
+### Subaddress (追加プライバシー)
+
+```
+Subaddress システム:
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Main Address: (A, B) = (a*G, b*G)                               │
+│                                                                 │
+│ Subaddress (i, j):                                              │
+│   m = Hs(a || i || j)         # サブアドレスシード             │
+│   D = B + m*G                  # サブアドレス spend key          │
+│   C = a*D                      # サブアドレス view key           │
+│   Subaddress = (C, D)                                           │
+│                                                                 │
+│ 用途:                                                           │
+│   - 各取引に異なるアドレスを使用                               │
+│   - 送金元同士の関連付けを困難に                               │
+│   - 1つの view key で全サブアドレスをスキャン可能              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ## Merkle Trees
 
 ### Binary Merkle Tree (Bitcoin/Core)
@@ -459,3 +656,6 @@ Node = SHA256(left + right)
 | Transaction Digest (Sui) | `implementations/sui/src/ptb.rs` |
 | Account/Auth (Aptos) | `implementations/aptos/src/account.rs` |
 | Node Digest (Aptos) | `implementations/aptos/src/aptos_bft.rs` |
+| Ring Signatures (Monero) | `implementations/monero/src/ringct.rs` |
+| Stealth Addresses (Monero) | `implementations/monero/src/stealth.rs` |
+| Key Images (Monero) | `implementations/monero/src/cryptonote.rs` |

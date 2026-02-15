@@ -13,6 +13,7 @@
 | Relay + Para | Polkadot | 1 (relay) + paras | GRANDPA収束 | 高 |
 | Mysticeti DAG | Sui | 複数 (round) | 全含む | 超高 |
 | AptosBFT DAG | Aptos | 複数 (round) | 全含む | 超高 |
+| Linear + Privacy | Monero | 1 | 破棄 | 中 |
 
 ## Linear Chain (Bitcoin/Ethereum/Core)
 
@@ -563,16 +564,106 @@ pub struct NodeCertificate {
 - **Block-STM**: 楽観的並列実行エンジンと組み合わせ
 - **~1秒ファイナリティ**: 高速なコンセンサス
 
+## Privacy Linear Chain (Monero)
+
+### 構造
+
+Monero は Bitcoin と同様のリニアチェーンだが、プライバシー機能のためブロック/トランザクション構造が異なる。
+
+```
+[Genesis] ← [Block 1] ← [Block 2] ← [Block 3] ← ... ← [Tip]
+    ↑          ↑           ↑           ↑
+ height=0   height=1    height=2    height=3
+
+各ブロック:
+┌─────────────────────────────────────────────────────────────────┐
+│ BlockHeader:                                                     │
+│   major_version: 16 (RingCT + CLSAG)                            │
+│   minor_version: 0                                               │
+│   timestamp: 1640000000                                          │
+│   prev_id: 0xabc...                                              │
+│   nonce: 1234567                                                 │
+├─────────────────────────────────────────────────────────────────┤
+│ MinerTx (coinbase):                                             │
+│   inputs: [Gen { height: N }]                                   │
+│   outputs: [TxOut { amount: 0, target: OneTimeKey }]            │
+│   extra: [tx_public_key, merge_mining_tag, ...]                 │
+├─────────────────────────────────────────────────────────────────┤
+│ TxHashes:                                                       │
+│   [tx_hash_1, tx_hash_2, ...]                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 動的ブロックサイズ
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              Dynamic Block Size                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Base Size: median(last 100 blocks)                            │
+│  Max Size:  2 × Base Size                                       │
+│                                                                 │
+│  Penalty:                                                       │
+│    block_reward × ((block_size / base_size) - 1)^2             │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Block Size    Penalty   Effective Reward              │   │
+│  ├─────────────────────────────────────────────────────────┤   │
+│  │ 1.0 × base    0%        100%                           │   │
+│  │ 1.5 × base    25%       75%                            │   │
+│  │ 2.0 × base    100%      0%                             │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+│  効果: スパム防止 + 需要に応じたスケーリング                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### ブロックテンプレート
+
+```rust
+// implementations/monero/src/cryptonote.rs
+
+pub struct BlockHeader {
+    pub major_version: u8,
+    pub minor_version: u8,
+    pub timestamp: u64,
+    pub prev_id: Hash,
+    pub nonce: u32,
+}
+
+pub struct Block {
+    pub header: BlockHeader,
+    pub miner_tx: Transaction,    // Coinbase
+    pub tx_hashes: Vec<Hash>,     // Non-coinbase TX hashes
+}
+
+// Transaction with privacy features
+pub struct Transaction {
+    pub prefix: TransactionPrefix,
+    pub signatures: Vec<RingSignature>,
+    pub rct_signatures: Option<RctSignatures>,
+}
+```
+
+### 特徴
+
+- **リニアチェーン**: Bitcoin と同様の単一親構造
+- **動的ブロックサイズ**: 需要に応じてスケール
+- **プライバシーデータ**: RingCT, Bulletproofs がブロックサイズを増大
+- **RandomX PoW**: ASIC 耐性マイニング
+
 ## 比較表
 
-| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based | Relay+Para | Mysticeti | AptosBFT |
-|------|-------------|---------------|-----|------------|---------|------------|------------|-----------|----------|
-| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 | BABE VRF | 全員並列 | 全員並列 |
-| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 | GRANDPA収束 | なし（全含） | なし（全含） |
-| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 | スロット+ラウンド | Wave+subdag | Round順 |
-| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 | 高 | 高 | 高 |
-| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット | 6秒/スロット | ~500ms | ~1秒 |
-| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 | 決定論的 (GRANDPA) | 決定論的 | 決定論的 |
+| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based | Relay+Para | Mysticeti | AptosBFT | Privacy (XMR) |
+|------|-------------|---------------|-----|------------|---------|------------|------------|-----------|----------|---------------|
+| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 | BABE VRF | 全員並列 | 全員並列 | 順次 (PoW) |
+| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 | GRANDPA収束 | なし（全含） | なし（全含） | 発生（破棄） |
+| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 | スロット+ラウンド | Wave+subdag | Round順 | height |
+| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 | 高 | 高 | 高 | 高 (暗号) |
+| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット | 6秒/スロット | ~500ms | ~1秒 | 2分 |
+| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 | 決定論的 (GRANDPA) | 決定論的 | 決定論的 | 確率的 |
 
 ## Tips vs Single Tip
 
@@ -617,3 +708,6 @@ Tips は複数存在可能（子を持たないブロック）
 | AptosBFT DAG (Aptos) | `implementations/aptos/src/aptos_bft.rs` |
 | Block-STM (Aptos) | `implementations/aptos/src/block_stm.rs` |
 | Account (Aptos) | `implementations/aptos/src/account.rs` |
+| CryptoNote (Monero) | `implementations/monero/src/cryptonote.rs` |
+| RingCT (Monero) | `implementations/monero/src/ringct.rs` |
+| Stealth (Monero) | `implementations/monero/src/stealth.rs` |
