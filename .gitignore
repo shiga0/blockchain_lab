@@ -1,0 +1,27 @@
+# Build artifacts
+/target/
+**/target/
+
+# Database files
+data/
+*.db
+
+# Wallet files (contain private keys)
+wallet.dat
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Cargo
+Cargo.lock

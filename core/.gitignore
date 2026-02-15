@@ -1,0 +1,19 @@
+# Build artifacts
+/target/
+
+# Cargo lock (optional - some prefer to commit this)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Blockchain data
+/data/
+wallet.dat

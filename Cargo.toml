@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "implementations/bitcoin",
+    "implementations/kaspa",
+    "implementations/ethereum",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Educational Blockchain Project"]
+
+[workspace.dependencies]
+# Core library
+blockchain-lab-core = { path = "core" }
+
+# Cryptography
+ring = "0.16.20"
+ripemd = "0.1"
+digest = "0.10"
+sha2 = "0.10"
+
+# Encoding
+data-encoding = "2.3.2"
+bs58 = "0.5"
+hex = "0.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3.3"
+serde_json = "1.0"
+
+# Math
+num-bigint = "0.4.3"
+
+# Storage
+sled = "0.34.7"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Utilities
+uuid = { version = "1.6", features = ["v4"] }
+log = "0.4"
+env_logger = "0.10"
+once_cell = "1.19"
+thiserror = "1.0"
+
+# Testing
+assert_cmd = "2.0"
