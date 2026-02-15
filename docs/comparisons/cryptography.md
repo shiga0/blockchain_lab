@@ -7,6 +7,7 @@
 | Bitcoin | Double SHA256 | RIPEMD160(SHA256) | Double SHA256 |
 | Ethereum | Keccak-256 | Keccak-256 (last 20 bytes) | Keccak-256 |
 | Kaspa | BLAKE2b | BLAKE2b | BLAKE2b |
+| Solana | SHA256 (PoH) | Ed25519公開鍵 | SHA256 |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -49,6 +50,7 @@
 | Bitcoin | secp256k1 | ECDSA / Schnorr (Taproot) |
 | Ethereum | secp256k1 | ECDSA |
 | Kaspa | secp256k1 | ECDSA / Schnorr |
+| Solana | Ed25519 | EdDSA |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -74,6 +76,21 @@ P-256 (NIST/Core):
 - 線形性（マルチシグに有利）
 
 Bitcoin Taproot で採用
+```
+
+### Ed25519 (Solana)
+
+```
+特徴:
+- EdDSA (Edwards-curve Digital Signature Algorithm)
+- Curve25519 の twisted Edwards 形式
+- 高速（ECDSA より検証が速い）
+- 決定的署名（同一入力で同一出力）
+- 64バイト署名 (R: 32 + S: 32)
+
+Solana の選択理由:
+- バッチ検証が高速（並列トランザクション処理に有利）
+- 実装がシンプル（サイドチャネル攻撃に強い）
 ```
 
 ## Address Formats
@@ -117,6 +134,23 @@ EIP-55 checksum:
 例: 0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed
 ```
 
+### Base58 (Solana)
+
+```
+Ed25519 公開鍵をそのまま Base58 エンコード (32 bytes)
+
+特徴:
+- チェックサムなし（公開鍵自体が有効性を持つ）
+- 44文字程度の文字列
+- 0, O, I, l を除外（視認性向上）
+
+例: 7EYnhQoR9YM3N7UoaKRoA44Uy8JeaZV3qyouov87awMs
+
+Program Derived Address (PDA):
+- seeds + program_id からオフカーブアドレスを導出
+- プログラムのみが「署名」可能（エスクロー等に使用）
+```
+
 ## Merkle Trees
 
 ### Binary Merkle Tree (Bitcoin/Core)
@@ -157,3 +191,6 @@ Node = SHA256(left + right)
 | Address (Core) | `core/src/crypto/address.rs` |
 | Merkle (Core) | `core/src/crypto/merkle.rs` |
 | secp256k1 (Bitcoin) | `implementations/bitcoin/src/crypto.rs` |
+| PoH/SHA256 (Solana) | `implementations/solana/src/consensus.rs` |
+| Ed25519 (Solana) | `implementations/solana/src/account.rs` |
+| PDA (Solana) | `implementations/solana/src/program.rs` |

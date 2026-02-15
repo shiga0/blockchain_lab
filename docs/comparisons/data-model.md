@@ -5,7 +5,8 @@
 | Model | Chains | State表現 | 並列性 |
 |-------|--------|----------|--------|
 | UTXO | Bitcoin, Kaspa, Core | 未使用出力の集合 | 高 |
-| Account | Ethereum, Solana | アカウント残高マップ | 低 |
+| Account | Ethereum | アカウント残高マップ | 低 |
+| Account + Owner | Solana | アカウント + 所有者プログラム | 高 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -107,16 +108,78 @@ pub struct Account {
 }
 ```
 
+## Account + Owner Model (Solana)
+
+### 概念
+
+```
+┌─────────────────────────────────────────────────────┐
+│              Solana Account                         │
+├─────────────────────────────────────────────────────┤
+│  lamports: u64         (残高: 1 SOL = 1e9 lamports)│
+│  data: Vec<u8>         (プログラムが使う任意データ) │
+│  owner: Pubkey         (このアカウントを所有する    │
+│                         プログラムのアドレス)       │
+│  executable: bool      (プログラムかどうか)        │
+│  rent_epoch: u64       (レント徴収エポック)        │
+└─────────────────────────────────────────────────────┘
+```
+
+### 所有権モデル
+
+```
+System Program (11111...1)
+    │
+    ├── owns → User Wallet A (lamports のみ変更可)
+    └── owns → User Wallet B
+
+Token Program (TokenkegQfeZyi...)
+    │
+    ├── owns → Token Mint (トークン定義)
+    └── owns → Token Account (トークン残高)
+```
+
+**ルール:**
+- owner プログラムのみがアカウントの data を変更可能
+- 誰でも lamports を追加できる（引き出しは owner のみ）
+- executable アカウントは BPF ローダーが所有
+
+### 特徴
+
+**メリット:**
+- 高並列性（アカウントアクセスを事前宣言）
+- プログラム間の明確な境界（所有権）
+- 状態とロジックの分離
+
+**デメリット:**
+- アカウント管理が複雑
+- レント（最低残高）が必要
+- PDAs (Program Derived Addresses) の理解が必要
+
+### 実装 (Solana)
+
+```rust
+// implementations/solana/src/account.rs
+
+pub struct Account {
+    pub lamports: u64,      // 残高
+    pub data: Vec<u8>,      // 状態データ
+    pub owner: Pubkey,      // 所有プログラム
+    pub executable: bool,   // プログラムフラグ
+    pub rent_epoch: u64,    // レントエポック
+}
+```
+
 ## 比較表
 
-| 観点 | UTXO | Account |
-|------|------|---------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 |
-| 送金 | 入力選択 + 出力作成 | 残高更新 |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) |
-| スマコン | △ (複雑) | ◎ (自然) |
-| プライバシー | ◎ (アドレス変更) | △ (固定アドレス) |
-| 軽量クライアント | △ (UTXO証明) | ◎ (状態証明) |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) |
+|------|------|---------------|---------------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) |
+| スマコン | △ (複雑) | ◎ (自然) | ◎ (プログラム) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) |
+| 状態とロジック | 結合 | 結合 | 分離 |
 
 ## 実装ファイル
 
@@ -125,3 +188,5 @@ pub struct Account {
 | UTXO (Core) | `core/src/execution/utxo.rs` |
 | UTXO (Core) | `core/src/execution/transaction.rs` |
 | Account (Ethereum) | `implementations/ethereum/src/state.rs` |
+| Account+Owner (Solana) | `implementations/solana/src/account.rs` |
+| Runtime (Solana) | `implementations/solana/src/runtime.rs` |

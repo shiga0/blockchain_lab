@@ -7,6 +7,7 @@
 | Bitcoin | PoW (SHA256) | Probabilistic (~6 blocks) | 10 min | High |
 | Ethereum | PoS (Casper FFG) | Economic (~13 min) | 12 sec | Low |
 | Kaspa | PoW + GHOSTDAG | Probabilistic (fast) | 1 sec | Medium |
+| Solana | PoH + Tower BFT | Economic (~2.5 sec) | 400 ms | Low |
 | Core (base) | PoW (SHA256) | Probabilistic | Configurable | - |
 
 ## Proof of Work (PoW)
@@ -71,6 +72,53 @@ Blue Score で順序付け
 - オーファンブロックなし
 - 高TPS（トランザクション/秒）
 
+## Proof of History + Tower BFT (Solana)
+
+### Proof of History (PoH)
+
+```
+SHA-256 ハッシュチェーンによる時間証明 (VDF)
+   ↓
+hash₀ → SHA256(hash₀) → hash₁ → SHA256(hash₁) → ...
+   ↓
+イベント（トランザクション）をチェーンに混入
+   ↓
+hash_n → SHA256(hash_n || event) → hash_{n+1}
+```
+
+**PoH の役割:**
+- 時間の経過を暗号学的に証明
+- コンセンサス前の事前順序付け
+- リーダーは PoH を生成し、バリデーターは検証のみ
+
+### Tower BFT
+
+```
+バリデーターが投票 (slot に対して)
+   ↓
+投票はスタック構造 (最大32投票)
+   ↓
+ロックアウトが指数的に増加 (2^depth slots)
+   ↓
+フォーク切り替えコストが指数的に増大
+   ↓
+2/3+ stake で実質的ファイナリティ
+```
+
+**投票ロックアウト:**
+```
+Depth 0: lockout = 2 slots   (0.8秒)
+Depth 1: lockout = 4 slots   (1.6秒)
+Depth 2: lockout = 8 slots   (3.2秒)
+...
+Depth 31: lockout = 2^32 slots (~54年)
+```
+
+**特徴:**
+- PoH が共通時計として機能（メッセージ交換削減）
+- 経済的ファイナリティ（ロールバックコスト増大）
+- 高スループット（並列トランザクション実行 + 400ms スロット）
+
 ## 実装ファイル
 
 | Chain | File |
@@ -79,3 +127,4 @@ Blue Score で順序付け
 | Bitcoin | `implementations/bitcoin/src/consensus.rs` |
 | Kaspa | `implementations/kaspa/src/consensus.rs` |
 | Ethereum | `implementations/ethereum/src/consensus.rs` |
+| Solana | `implementations/solana/src/consensus.rs` |

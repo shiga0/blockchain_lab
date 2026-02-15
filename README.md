@@ -14,7 +14,8 @@ blockchain_lab/
 ├── implementations/
 │   ├── bitcoin/             # Bitcoin風実装
 │   ├── kaspa/               # Kaspa風実装（GHOSTDAG）
-│   └── ethereum/            # Ethereum風実装（Account Model）
+│   ├── ethereum/            # Ethereum風実装（Account Model）
+│   └── solana/              # Solana風実装（PoH + Tower BFT）
 ├── docs/
 │   └── comparisons/         # 比較ドキュメント
 └── experiments/             # 実験・ベンチマーク
@@ -22,14 +23,14 @@ blockchain_lab/
 
 ## 比較表
 
-| 観点 | Core | Bitcoin | Kaspa | Ethereum |
-|------|------|---------|-------|----------|
-| データモデル | UTXO | UTXO | UTXO | Account |
-| コンセンサス | PoW | PoW | PoW + GHOSTDAG | PoS |
-| ブロック構造 | 線形 | 線形 | DAG | 線形 |
-| ハッシュ | SHA256 | Double SHA256 | BLAKE2b | Keccak-256 |
-| 署名曲線 | P-256 | secp256k1 | secp256k1 | secp256k1 |
-| ブロック時間 | 可変 | 10分 | 1秒 | 12秒 |
+| 観点 | Core | Bitcoin | Kaspa | Ethereum | Solana |
+|------|------|---------|-------|----------|--------|
+| データモデル | UTXO | UTXO | UTXO | Account | Account+Owner |
+| コンセンサス | PoW | PoW | PoW + GHOSTDAG | PoS | PoH + Tower BFT |
+| ブロック構造 | 線形 | 線形 | DAG | 線形 | Slot-Entry |
+| ハッシュ | SHA256 | Double SHA256 | BLAKE2b | Keccak-256 | SHA256 |
+| 署名曲線 | P-256 | secp256k1 | secp256k1 | secp256k1 | Ed25519 |
+| ブロック時間 | 可変 | 10分 | 1秒 | 12秒 | 400ms |
 
 ## クイックスタート
 
