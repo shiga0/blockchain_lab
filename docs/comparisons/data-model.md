@@ -9,6 +9,7 @@
 | Account + Owner | Solana | アカウント + 所有者プログラム | 高 |
 | Account + ABCI | Cosmos | アカウント + モジュール分離 | 中 |
 | Multi-VM Subnet | Avalanche | チェーン別 (UTXO/Account/Custom) | 高 |
+| Extended UTXO | Cardano | UTXO + Datum + Multi-Asset | 高 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -306,16 +307,102 @@ pub struct ValidatorSet {
 - Subnet バリデーターの募集が必要
 - クロスチェーン操作が必要
 
+## Extended UTXO Model (Cardano)
+
+### 概念
+
+Cardano の eUTXO は Bitcoin の UTXO を拡張し、スマートコントラクトを可能にする。
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Bitcoin UTXO:          │ Cardano eUTXO:                    │
+├─────────────────────────────────────────────────────────────┤
+│ TxOut {                │ TxOut {                           │
+│   value: Satoshi       │   value: Value (multi-asset)      │
+│   script: P2PKH        │   address: Address                │
+│ }                      │   datum: Option<Datum>            │
+│                        │   reference_script: Option<Script>│
+│                        │ }                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### eUTXO の拡張点
+
+| 拡張 | 説明 |
+|------|------|
+| Datum | UTxO に任意データを添付（状態保存） |
+| Redeemer | スクリプト実行時の入力データ |
+| ScriptContext | トランザクション全体を参照可能 |
+| Multi-Asset | ネイティブトークン（スマコン不要） |
+| Reference Scripts | スクリプト参照による再利用 |
+
+### Plutus バリデーター
+
+```
+validator(datum, redeemer, script_context) → Bool
+
+┌─────────────────────────────────────────────────────────────┐
+│ ScriptContext:                                              │
+├─────────────────────────────────────────────────────────────┤
+│ TxInfo:                                                     │
+│   inputs: [(TxIn, TxOut)]      // 全入力                   │
+│   outputs: [TxOut]             // 全出力                   │
+│   mint: Value                  // 発行/焼却                │
+│   valid_range: TimeRange       // 有効時間範囲             │
+│   signatories: [PubKeyHash]    // 署名者                   │
+│                                                             │
+│ Purpose:                                                    │
+│   Spending(TxIn)     // UTXO消費の検証                     │
+│   Minting(PolicyId)  // トークン発行の検証                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 実装 (Cardano)
+
+```rust
+// implementations/cardano/src/eutxo.rs
+
+pub struct TxOut {
+    pub address: Address,
+    pub value: Value,              // Multi-asset
+    pub datum: Option<Datum>,      // 状態データ
+    pub reference_script: Option<ScriptHash>,
+}
+
+pub struct Value {
+    pub coin: Lovelace,            // ADA
+    pub multi_asset: HashMap<PolicyId, HashMap<AssetName, i64>>,
+}
+
+pub enum Datum {
+    Hash(DatumHash),               // ハッシュのみ
+    Inline(PlutusData),            // インラインデータ
+}
+```
+
+### 特徴
+
+**メリット:**
+- UTXO の並列性を維持しつつスマートコントラクト可能
+- ネイティブマルチアセット（スマコン不要で高速）
+- 決定論的手数料（実行前に計算可能）
+- スクリプトは純粋関数（状態変更なし）
+
+**デメリット:**
+- 状態マシンの設計が直感的でない
+- 複数 UTxO 間の協調が複雑
+- Datum サイズに制限
+
 ## 比較表
 
-| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) |
-|------|------|---------------|---------------------|----------------------|-----------------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 |
-| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) |
-| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) |
-| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 |
-| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) |
+|------|------|---------------|---------------------|----------------------|-----------------|-------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) |
+| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) |
+| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 |
 
 ## 実装ファイル
 
@@ -330,3 +417,5 @@ pub struct ValidatorSet {
 | Types (Cosmos) | `implementations/cosmos/src/types.rs` |
 | Validator (Avalanche) | `implementations/avalanche/src/validator.rs` |
 | Subnet (Avalanche) | `implementations/avalanche/src/subnet.rs` |
+| eUTXO (Cardano) | `implementations/cardano/src/eutxo.rs` |
+| Plutus (Cardano) | `implementations/cardano/src/plutus.rs` |

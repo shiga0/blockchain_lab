@@ -9,6 +9,7 @@
 | DAG | Kaspa, IOTA, Avalanche X-Chain | 複数 | 含む | 高 |
 | Slot-Entry | Solana | 1 (prev slot) | スキップ可 | 超高 |
 | Snowman Chain | Avalanche P/C-Chain | 1 | なし (Snowball) | 高 |
+| Slot-based | Cardano | 1 | 許容 (longest) | 中 |
 
 ## Linear Chain (Bitcoin/Ethereum/Core)
 
@@ -313,14 +314,14 @@ X-Chain は DAG 構造を使用（Kaspa と同様のアプローチ）。
 
 ## 比較表
 
-| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman |
-|------|-------------|---------------|-----|------------|---------|
-| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 |
-| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし |
-| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 |
-| 実装難易度 | 低 | 中 | 高 | 中 | 中 |
-| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) |
-| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 |
+| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based |
+|------|-------------|---------------|-----|------------|---------|------------|
+| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 |
+| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 |
+| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 |
+| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 |
+| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット |
+| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 |
 
 ## Tips vs Single Tip
 
@@ -355,3 +356,4 @@ Tips は複数存在可能（子を持たないブロック）
 | Linear+Commit (Cosmos) | `implementations/cosmos/src/types.rs` |
 | Snowball (Avalanche) | `implementations/avalanche/src/snowball.rs` |
 | Subnet (Avalanche) | `implementations/avalanche/src/subnet.rs` |
+| Ouroboros (Cardano) | `implementations/cardano/src/ouroboros.rs` |

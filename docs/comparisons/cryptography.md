@@ -10,6 +10,7 @@
 | Solana | SHA256 (PoH) | Ed25519公開鍵 | SHA256 |
 | Cosmos | SHA256 | Bech32 (secp256k1/Ed25519) | SHA256 |
 | Avalanche | SHA256 | CB58/Bech32 (secp256k1) | SHA256 |
+| Cardano | BLAKE2b-256 | Bech32 (Ed25519) | BLAKE2b-256 |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -55,6 +56,7 @@
 | Solana | Ed25519 | EdDSA |
 | Cosmos | secp256k1 / Ed25519 | ECDSA / EdDSA |
 | Avalanche | secp256k1 | ECDSA |
+| Cardano | Ed25519 | EdDSA + VRF |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -200,6 +202,39 @@ NodeID (バリデーター):
 - CB58 = Base58 with checksum
 ```
 
+### Bech32 (Cardano)
+
+```
+Shelley アドレス構造:
+  addr1... (mainnet) / addr_test1... (testnet)
+
+┌─────────────────────────────────────────────────────────────┐
+│ Address = Header + PaymentCredential + StakeCredential      │
+├─────────────────────────────────────────────────────────────┤
+│ Header (1 byte):                                            │
+│   - ネットワーク (mainnet/testnet)                          │
+│   - アドレスタイプ (base/pointer/enterprise/reward)         │
+│                                                             │
+│ PaymentCredential (28 bytes):                               │
+│   - PubKeyHash または ScriptHash                            │
+│                                                             │
+│ StakeCredential (28 bytes, optional):                       │
+│   - ステーキング用クレデンシャル                           │
+└─────────────────────────────────────────────────────────────┘
+
+アドレスタイプ:
+- Base: Payment + Staking (一般的)
+- Enterprise: Payment のみ (ステーキングなし)
+- Pointer: Staking を chain pointer で参照
+- Reward: ステーキング報酬受取用
+
+例: addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer...
+
+Script Address:
+- addr1w... (スクリプトでロックされた資金)
+- Plutus validator の hash が PaymentCredential
+```
+
 ## Merkle Trees
 
 ### Binary Merkle Tree (Bitcoin/Core)
@@ -247,3 +282,5 @@ Node = SHA256(left + right)
 | Vote/Commit (Cosmos) | `implementations/cosmos/src/consensus.rs` |
 | Validator Hash (Avalanche) | `implementations/avalanche/src/validator.rs` |
 | Snowball Choice (Avalanche) | `implementations/avalanche/src/snowball.rs` |
+| Ouroboros VRF (Cardano) | `implementations/cardano/src/ouroboros.rs` |
+| Plutus Data Hash (Cardano) | `implementations/cardano/src/eutxo.rs` |

@@ -10,6 +10,7 @@
 | Solana | PoH + Tower BFT | Economic (~2.5 sec) | 400 ms | Low |
 | Cosmos | Tendermint BFT | Instant (2/3+ precommit) | 1-7 sec | Low |
 | Avalanche | Snowball | Probabilistic (~1-2 sec) | ~1-2 sec | Low |
+| Cardano | Ouroboros Praos | Probabilistic (~k slots) | 1 sec | Low |
 | Core (base) | PoW (SHA256) | Probabilistic | Configurable | - |
 
 ## Proof of Work (PoW)
@@ -268,6 +269,74 @@ PoW/PoS (Bitcoin/Ethereum):    Tendermint BFT (Cosmos):
 - **高速ファイナリティ**: ~1-2 秒で確率的ファイナリティ
 - **Subnet**: 独立したバリデーターセットとカスタム VM
 
+## Ouroboros Praos (Cardano)
+
+### VRFベースのリーダー選出
+
+```
+Ouroboros Praos:
+  全てのステークプールが各スロットでリーダー抽選に参加
+
+┌─────────────────────────────────────────────────────────────┐
+│ スロット N:                                                 │
+│                                                             │
+│ Pool A (30% stake):                                        │
+│   VRF(key, slot_nonce || N) = 0x3f...                      │
+│   threshold = 1 - (1-f)^0.30 = 0.015                       │
+│   0x3f... < 0.015? → No, not leader                        │
+│                                                             │
+│ Pool B (10% stake):                                        │
+│   VRF(key, slot_nonce || N) = 0x01...                      │
+│   threshold = 1 - (1-f)^0.10 = 0.005                       │
+│   0x01... < 0.005? → Yes! Leader for slot N                │
+└─────────────────────────────────────────────────────────────┘
+
+f (active_slot_coeff) = 0.05 → ~5% のスロットにブロック
+```
+
+### スロットとエポック
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Epoch (~5日)                         │
+│                   432,000 スロット                          │
+├─────────────────────────────────────────────────────────────┤
+│ Slot 0  │ Slot 1  │ Slot 2  │ ... │ Slot 431,999           │
+│ [Block] │ [empty] │ [empty] │     │ [Block]                │
+│         │         │         │     │                        │
+│ ← 1 秒/スロット →                                          │
+└─────────────────────────────────────────────────────────────┘
+
+エポック境界でのイベント:
+- スナップショット: 次々エポックのステーク分布を記録
+- Nonce 更新: VRF用のランダム性ソースを更新
+- 報酬分配: プール報酬をステーカーに分配
+```
+
+### セキュリティパラメータ
+
+| パラメータ | 値 | 説明 |
+|-----------|-----|------|
+| k | 2160 | 最大ロールバック深さ (セキュリティパラメータ) |
+| f | 0.05 | アクティブスロット係数 (ブロック生成率) |
+| slot | 1秒 | スロット長 |
+| epoch | ~5日 | エポック長 (432,000 slots) |
+
+### チェーン選択ルール
+
+```
+複数の有効なチェーンがある場合:
+  1. ブロック数が多いチェーンを優先 (longest chain)
+  2. 同じ長さなら、より低いスロットを優先
+  3. k ブロック以上のロールバックは禁止
+```
+
+**特徴:**
+- **証明可能な安全性**: 形式的セキュリティ証明あり
+- **VRFによる秘密選出**: リーダーはブロック公開まで匿名
+- **ステークベース**: 計算リソースではなくステーク量で選出確率決定
+- **エポック制**: 定期的なステーク更新とパラメータ調整
+
 ## 実装ファイル
 
 | Chain | File |
@@ -279,3 +348,4 @@ PoW/PoS (Bitcoin/Ethereum):    Tendermint BFT (Cosmos):
 | Solana | `implementations/solana/src/consensus.rs` |
 | Cosmos | `implementations/cosmos/src/consensus.rs` |
 | Avalanche | `implementations/avalanche/src/snowball.rs` |
+| Cardano | `implementations/cardano/src/ouroboros.rs` |
