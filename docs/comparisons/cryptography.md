@@ -11,6 +11,7 @@
 | Cosmos | SHA256 | Bech32 (secp256k1/Ed25519) | SHA256 |
 | Avalanche | SHA256 | CB58/Bech32 (secp256k1) | SHA256 |
 | Cardano | BLAKE2b-256 | Bech32 (Ed25519) | BLAKE2b-256 |
+| Polkadot | BLAKE2-256 | SS58 (Sr25519/Ed25519) | Binary Merkle |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -57,6 +58,7 @@
 | Cosmos | secp256k1 / Ed25519 | ECDSA / EdDSA |
 | Avalanche | secp256k1 | ECDSA |
 | Cardano | Ed25519 | EdDSA + VRF |
+| Polkadot | Sr25519 / Ed25519 | Schnorr + VRF |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -235,6 +237,92 @@ Script Address:
 - Plutus validator の hash が PaymentCredential
 ```
 
+### SS58 (Polkadot/Substrate)
+
+```
+SS58 アドレスフォーマット:
+  [prefix] + [pubkey] + [checksum]
+
+┌─────────────────────────────────────────────────────────────┐
+│ Prefix (1-2 bytes):                                         │
+│   - 0: Polkadot                                             │
+│   - 2: Kusama                                               │
+│   - 42: Generic Substrate                                   │
+│   - チェーン固有の番号（SS58 registry で管理）             │
+│                                                             │
+│ Public Key (32 bytes):                                      │
+│   - Sr25519 または Ed25519 公開鍵                          │
+│                                                             │
+│ Checksum (2 bytes):                                         │
+│   - Blake2b-512("SS58PRE" || prefix || pubkey)[0:2]        │
+└─────────────────────────────────────────────────────────────┘
+
+Base58 エンコードで文字列化:
+  Polkadot:  1... (例: 12rqdJSjFFYqQ5TJKqQQU...)
+  Kusama:    C... (例: CxDDSH8gS7jecsxaRL8Txf...)
+  Generic:   5... (例: 5GrwvaEF5zXb26Fz9rcQpD...)
+
+特徴:
+- チェーン別プレフィックスで誤送金を防止
+- 同一秘密鍵で異なるチェーンアドレスを導出可能
+- チェックサムでタイプミス検出
+```
+
+### Sr25519 (Polkadot)
+
+```
+Ristretto255 上の Schnorr 署名
+
+特徴:
+- BABE VRF に必要（Ed25519 は VRF 非対応）
+- 署名集約可能（将来のマルチシグ最適化）
+- Ed25519 と同等の速度
+- Curve25519 ベース（広く研究されている）
+
+用途:
+- Session Keys: バリデーターのコンセンサス鍵
+- BABE: VRF ベースのスロット割り当て
+- アカウント署名: ユーザートランザクション
+
+Ed25519 との比較:
+┌───────────────┬───────────────┬───────────────┐
+│               │ Ed25519       │ Sr25519       │
+├───────────────┼───────────────┼───────────────┤
+│ VRF           │ ✗             │ ✓             │
+│ 署名集約      │ ✗             │ ✓             │
+│ 決定的署名    │ ✓             │ ✗ (より安全)  │
+│ 標準化        │ RFC 8032      │ Substrate独自 │
+└───────────────┴───────────────┴───────────────┘
+```
+
+### VRF (Verifiable Random Function)
+
+```
+Polkadot の BABE で使用:
+
+VRF_sign(secret_key, input) → (output, proof)
+VRF_verify(public_key, input, output, proof) → bool
+
+特徴:
+- output は入力に対して決定的だが予測不可能
+- proof により正しく計算されたことを検証可能
+- BABE スロット割り当てで使用
+
+┌─────────────────────────────────────────────────────────────┐
+│ BABE VRF 使用例:                                            │
+├─────────────────────────────────────────────────────────────┤
+│ input = epoch_randomness || slot_number                     │
+│                                                             │
+│ (output, proof) = VRF_sign(validator_key, input)            │
+│                                                             │
+│ if output < threshold(stake):                               │
+│     → このスロットでブロック生成権を獲得                   │
+│     → ブロックに output と proof を含める                  │
+│                                                             │
+│ 他のバリデーターは proof で検証可能                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ## Merkle Trees
 
 ### Binary Merkle Tree (Bitcoin/Core)
@@ -284,3 +372,6 @@ Node = SHA256(left + right)
 | Snowball Choice (Avalanche) | `implementations/avalanche/src/snowball.rs` |
 | Ouroboros VRF (Cardano) | `implementations/cardano/src/ouroboros.rs` |
 | Plutus Data Hash (Cardano) | `implementations/cardano/src/eutxo.rs` |
+| BABE VRF (Polkadot) | `implementations/polkadot/src/babe.rs` |
+| GRANDPA Signatures (Polkadot) | `implementations/polkadot/src/grandpa.rs` |
+| Parachain Hashes (Polkadot) | `implementations/polkadot/src/parachain.rs` |

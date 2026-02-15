@@ -11,6 +11,7 @@
 | Cosmos | Tendermint BFT | Instant (2/3+ precommit) | 1-7 sec | Low |
 | Avalanche | Snowball | Probabilistic (~1-2 sec) | ~1-2 sec | Low |
 | Cardano | Ouroboros Praos | Probabilistic (~k slots) | 1 sec | Low |
+| Polkadot | BABE + GRANDPA | Deterministic (~12 sec) | 6 sec | Low |
 | Core (base) | PoW (SHA256) | Probabilistic | Configurable | - |
 
 ## Proof of Work (PoW)
@@ -337,6 +338,114 @@ f (active_slot_coeff) = 0.05 → ~5% のスロットにブロック
 - **ステークベース**: 計算リソースではなくステーク量で選出確率決定
 - **エポック制**: 定期的なステーク更新とパラメータ調整
 
+## BABE + GRANDPA (Polkadot)
+
+### ハイブリッドコンセンサス
+
+```
+Polkadot は2つのコンセンサスを組み合わせ:
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    BABE (Block Production)                      │
+│  スロットベース、VRF リーダー選出                               │
+│  - ~6秒ごとにブロック生成                                       │
+│  - スロットに複数のリーダーが存在可能（フォーク）              │
+│  - 確率的ファイナリティ（PoW に類似）                          │
+├─────────────────────────────────────────────────────────────────┤
+│                    GRANDPA (Finality)                           │
+│  Byzantine 合意によるチェーン最終化                             │
+│  - ブロックではなくチェーンを最終化                            │
+│  - 複数ブロックを一度に最終化可能                              │
+│  - 決定論的ファイナリティ（2/3+ 投票）                         │
+└─────────────────────────────────────────────────────────────────┘
+
+タイムライン:
+┌────┬────┬────┬────┬────┬────┬────┬────┐
+│ B1 │ B2 │ B3 │ B4 │ B5 │ B6 │ B7 │ B8 │  BABE がブロック生成
+└────┴────┴────┴────┴────┴────┴────┴────┘
+  ↑              ↑                   ↑
+  └─ GRANDPA ────┴─── バッチで ──────┘
+     最終化済み       最終化
+```
+
+### BABE: VRF ベースのスロット割り当て
+
+```
+Primary Slot (VRF 勝利):
+  VRF(key, slot_randomness) < threshold(stake)
+  → 強い乱数性、複数勝者の可能性あり
+
+Secondary Slot (決定論的フォールバック):
+  Primary 勝者がいない場合、ラウンドロビン
+  → ライブネス保証（空スロットなし）
+
+┌─────┬─────┬─────┬─────┬─────┬─────┐
+│ S0  │ S1  │ S2  │ S3  │ S4  │ S5  │
+│ Pri │ Sec │ Pri │ Pri │ Sec │ Pri │
+│ V3  │ V1  │ V2  │V1,V4│ V2  │ V3  │
+└─────┴─────┴─────┴─────┴─────┴─────┘
+  ↑                   ↑
+  VRF勝者        複数VRF勝者（フォーク）
+
+Epoch N:
+  Epoch N-2 の乱数を使用
+  Epoch N+2 用の VRF 出力を蓄積
+  → 2エポック先読みでステーク grinding を防止
+```
+
+### GRANDPA: チェーン最終化
+
+```
+ラウンド N:
+
+1. Prevote (第一投票):
+   各バリデーターが最良チェーンに投票
+   ┌─────────────────────────────────────────┐
+   │ Prevote { target_hash, target_number }  │
+   └─────────────────────────────────────────┘
+
+2. Precommit (第二投票):
+   2/3+ prevotes があれば ghost(C) に precommit
+   ┌─────────────────────────────────────────┐
+   │ Precommit { target_hash, target_number }│
+   └─────────────────────────────────────────┘
+
+3. Finalize (最終化):
+   2/3+ precommits でブロック B は FINAL
+   → B とその祖先全てが最終化
+
+GHOST 関数:
+  prevotes の共通祖先で最も重みのあるチェーンを選択
+```
+
+### Tendermint vs GRANDPA
+
+```
+Tendermint BFT:              GRANDPA:
+  各ブロックに対してラウンド     チェーンに対してラウンド
+         ↓                           ↓
+  1ブロック = 1ラウンド          複数ブロック = 1ラウンド
+         ↓                           ↓
+  ブロック毎にファイナリティ      バッチファイナリティ
+         ↓                           ↓
+  停止時は次ラウンドまで待機     BABE が継続生成
+```
+
+### 主要パラメータ
+
+| パラメータ | 値 | 説明 |
+|-----------|-----|------|
+| スロット長 | 6秒 | BABE ブロック間隔 |
+| エポック長 | 2400スロット (~4時間) | VRF 乱数の更新周期 |
+| バリデーター数 | 最大1000 | リレーチェーンのバリデーター |
+| c (閾値定数) | 1/4 | Primary スロット確率 |
+
+**特徴:**
+- **ライブネス優先**: BABE はGRANDPA停止時も継続
+- **効率的ファイナリティ**: 複数ブロックを一度に最終化
+- **フォーク耐性**: GRANDPAがチェーンを収束
+- **パラチェーン対応**: リレーチェーンがパラチェーンを調整
+
 ## 実装ファイル
 
 | Chain | File |
@@ -349,3 +458,4 @@ f (active_slot_coeff) = 0.05 → ~5% のスロットにブロック
 | Cosmos | `implementations/cosmos/src/consensus.rs` |
 | Avalanche | `implementations/avalanche/src/snowball.rs` |
 | Cardano | `implementations/cardano/src/ouroboros.rs` |
+| Polkadot | `implementations/polkadot/src/babe.rs`, `grandpa.rs` |

@@ -10,6 +10,7 @@
 | Slot-Entry | Solana | 1 (prev slot) | スキップ可 | 超高 |
 | Snowman Chain | Avalanche P/C-Chain | 1 | なし (Snowball) | 高 |
 | Slot-based | Cardano | 1 | 許容 (longest) | 中 |
+| Relay + Para | Polkadot | 1 (relay) + paras | GRANDPA収束 | 高 |
 
 ## Linear Chain (Bitcoin/Ethereum/Core)
 
@@ -312,16 +313,135 @@ X-Chain は DAG 構造を使用（Kaspa と同様のアプローチ）。
 - **高スループット**: 並列提案・処理
 - **Snowball で順序付け**: コンフリクトを投票で解決
 
+## Relay Block + Parachain Inclusion (Polkadot)
+
+### 構造
+
+Polkadot のリレーブロックはパラチェーン候補を含む特殊な構造。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Relay Block Header                            │
+├─────────────────────────────────────────────────────────────────┤
+│ parent_hash: Hash                                               │
+│ number: BlockNumber                                             │
+│ state_root: Hash          // リレーチェーン状態                 │
+│ extrinsics_root: Hash     // トランザクション                   │
+│ digest: [                                                       │
+│   PreRuntime(BABE, slot_claim),   // BABE スロット情報          │
+│   Seal(BABE, signature),          // ブロック署名               │
+│   Consensus(GRANDPA, authority),  // GRANDPA 権限セット変更     │
+│ ]                                                               │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  Parachains Inherent Data                        │
+├─────────────────────────────────────────────────────────────────┤
+│ bitfields: [                                                    │
+│   SignedAvailabilityBitfield(validator=0, bits=0b11110111),    │
+│   SignedAvailabilityBitfield(validator=1, bits=0b11111111),    │
+│   ...                                                           │
+│ ]                                                               │
+│                                                                 │
+│ backed_candidates: [                                            │
+│   BackedCandidate(para_id=1000, receipt=..., votes=[sig1,sig2])│
+│   BackedCandidate(para_id=1001, receipt=..., votes=[sig3,sig4])│
+│ ]                                                               │
+│                                                                 │
+│ disputes: [                                                     │
+│   DisputeStatement(candidate=..., valid=true, validator=5)     │
+│   DisputeStatement(candidate=..., valid=false, validator=7)    │
+│ ]                                                               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Availability Core
+
+```
+各パラチェーンはコアに割り当てられ、ローテーション:
+
+┌───────┬───────┬───────┬───────┐
+│Core 0 │Core 1 │Core 2 │Core 3 │
+├───────┼───────┼───────┼───────┤
+│Para   │Para   │Para   │Para   │
+│1000   │1001   │1002   │1003   │
+│       │       │       │       │
+│Free   │Occupied│Free  │Occupied│
+│       │pending │       │avail  │
+└───────┴───────┴───────┴───────┘
+
+Occupied → Availability 待ち (PoV チャンク分散中)
+Available → 2/3+ チャンク保持確認済み → 包含可能
+Free → 新しい候補を受け入れ可能
+```
+
+### 実装
+
+```rust
+// implementations/polkadot/src/parachain.rs
+
+pub struct ParachainsInherentData {
+    /// 署名付き Availability ビットフィールド
+    pub bitfields: Vec<SignedAvailabilityBitfield>,
+    /// バッキング済み候補
+    pub backed_candidates: Vec<BackedCandidate>,
+    /// 紛争ステートメント
+    pub disputes: Vec<DisputeStatement>,
+    /// 親ヘッダハッシュ
+    pub parent_header: Hash,
+}
+
+pub enum CoreState {
+    Free,
+    Occupied(OccupiedCore),
+}
+
+pub struct OccupiedCore {
+    pub para_id: ParaId,
+    pub group_responsible: GroupIndex,
+    pub candidate_hash: Hash,
+    pub availability: AvailabilityBitfield,
+    pub time_out_at: BlockNumber,
+}
+```
+
+### GRANDPA ファイナリティ証明
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  GRANDPA Justification                           │
+├─────────────────────────────────────────────────────────────────┤
+│ round: 42                                                       │
+│ commit:                                                         │
+│   target_hash: 0xabc...                                         │
+│   target_number: 12345                                          │
+│   precommits: [                                                 │
+│     (validator=0, signature=...),                               │
+│     (validator=1, signature=...),                               │
+│     ... (2/3+ of validators)                                    │
+│   ]                                                             │
+│ votes_ancestries: [blocks between last finalized and target]   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 特徴
+
+- **2層構造**: リレーブロック + パラチェーンブロック
+- **Availability**: イレイジャー符号化で PoV を分散保存
+- **バッチファイナリティ**: GRANDPA が複数ブロックを一度に最終化
+- **フォーク解決**: BABE でフォーク許容、GRANDPA で収束
+
 ## 比較表
 
-| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based |
-|------|-------------|---------------|-----|------------|---------|------------|
-| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 |
-| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 |
-| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 |
-| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 |
-| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット |
-| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 |
+| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry | Snowman | Slot-based | Relay+Para |
+|------|-------------|---------------|-----|------------|---------|------------|------------|
+| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング | 並列提案可 | VRF抽選 | BABE VRF |
+| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 | なし | 競合選択 | GRANDPA収束 |
+| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 | Snowball投票 | スロット順 | スロット+ラウンド |
+| 実装難易度 | 低 | 中 | 高 | 中 | 中 | 中 | 高 |
+| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) | 高速 (1-2秒) | 1秒/スロット | 6秒/スロット |
+| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 | 確率的 | 確率的 | 決定論的 (GRANDPA) |
 
 ## Tips vs Single Tip
 
@@ -357,3 +477,6 @@ Tips は複数存在可能（子を持たないブロック）
 | Snowball (Avalanche) | `implementations/avalanche/src/snowball.rs` |
 | Subnet (Avalanche) | `implementations/avalanche/src/subnet.rs` |
 | Ouroboros (Cardano) | `implementations/cardano/src/ouroboros.rs` |
+| BABE (Polkadot) | `implementations/polkadot/src/babe.rs` |
+| GRANDPA (Polkadot) | `implementations/polkadot/src/grandpa.rs` |
+| Parachain (Polkadot) | `implementations/polkadot/src/parachain.rs` |

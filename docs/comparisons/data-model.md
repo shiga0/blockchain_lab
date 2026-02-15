@@ -10,6 +10,7 @@
 | Account + ABCI | Cosmos | アカウント + モジュール分離 | 中 |
 | Multi-VM Subnet | Avalanche | チェーン別 (UTXO/Account/Custom) | 高 |
 | Extended UTXO | Cardano | UTXO + Datum + Multi-Asset | 高 |
+| Relay + Parachain | Polkadot | 共有セキュリティ + 独立状態 | 高 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -393,16 +394,133 @@ pub enum Datum {
 - 複数 UTxO 間の協調が複雑
 - Datum サイズに制限
 
+## Relay Chain + Parachain Model (Polkadot)
+
+### 概念
+
+Polkadot はリレーチェーンとパラチェーンの2層アーキテクチャ。パラチェーンは独自の状態を持ちながら、リレーチェーンからセキュリティを継承。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      RELAY CHAIN                                │
+│  ・共有セキュリティ（最大1000バリデーター）                     │
+│  ・パラチェーンブロックの検証・包含                            │
+│  ・クロスチェーンメッセージ (XCM) の調整                       │
+│  ・DOT ステーキング・ガバナンス                                │
+└─────────────────────────────────────────────────────────────────┘
+         │              │              │
+   ┌─────┴─────┐  ┌─────┴─────┐  ┌─────┴─────┐
+   │ Parachain │  │ Parachain │  │ Parachain │
+   │    1000   │  │    1001   │  │    1002   │
+   │  (Acala)  │  │(Moonbeam) │  │ (Astar)   │
+   │           │  │           │  │           │
+   │ Collators │  │ Collators │  │ Collators │
+   │ 独自状態  │  │ EVM互換   │  │ WASM+EVM  │
+   └───────────┘  └───────────┘  └───────────┘
+```
+
+### パラチェーン候補のライフサイクル
+
+```
+1. Collator がパラチェーンブロックを生成
+   ┌────────────────────────────────────────┐
+   │ Candidate {                            │
+   │   para_id,                             │
+   │   relay_parent,                        │
+   │   pov_hash,        // Proof of Validity│
+   │   head_data,       // 新しい状態ルート │
+   │   commitments,     // メッセージ等     │
+   │ }                                      │
+   └────────────────────────────────────────┘
+
+2. Backing Group (バリデーターグループ) が PoV を検証
+   ┌────────────────────────────────────────┐
+   │ BackedCandidate {                      │
+   │   candidate,                           │
+   │   validity_votes: [sig1, sig2],        │
+   │   validator_indices: 0b110,            │
+   │ }                                      │
+   └────────────────────────────────────────┘
+
+3. Availability (イレイジャー符号化 PoV を分散)
+   ┌────────────────────────────────────────┐
+   │ 2/3+ バリデーターがチャンクを保持      │
+   │ AvailabilityBitfield: 0b11110111       │
+   └────────────────────────────────────────┘
+
+4. Inclusion (リレーブロックに包含)
+```
+
+### 共有セキュリティ vs ブリッジ
+
+```
+従来のブリッジ:           Polkadot 共有セキュリティ:
+  Chain A ←→ Chain B        Relay Chain
+       ↕                          ↕
+     Bridge                  Para A ─ XCM ─ Para B
+       ↕                          ↕
+  独立した              同じバリデーターが
+  セキュリティ            全パラを検証
+```
+
+### XCM (Cross-Consensus Messaging)
+
+```
+Location (アドレス指定):
+  ../Parachain(1000)/Account(0x123...)
+
+Instructions (命令):
+  WithdrawAsset(DOT, 10)      // 資産を引き出し
+  BuyExecution(weight)         // 実行手数料を支払い
+  DepositAsset(DOT, dest)      // 宛先に預け入れ
+  Transact(call_data)          // リモート呼び出し
+```
+
+### 実装 (Polkadot)
+
+```rust
+// implementations/polkadot/src/parachain.rs
+
+pub struct CandidateDescriptor {
+    pub para_id: ParaId,
+    pub relay_parent: Hash,
+    pub pov_hash: Hash,
+    pub para_head: Hash,
+    pub validation_code_hash: Hash,
+}
+
+pub struct BackedCandidate {
+    pub candidate: CommittedCandidateReceipt,
+    pub validity_votes: Vec<ValidityAttestation>,
+    pub validator_indices: Vec<bool>,
+}
+
+pub struct AvailabilityBitfield(pub Vec<bool>);
+```
+
+### 特徴
+
+**メリット:**
+- 共有セキュリティ（全パラチェーンがリレーの信頼を継承）
+- ネイティブクロスチェーン（ブリッジ不要の XCM）
+- カスタムランタイム（Substrate で独自ロジック）
+- スロットオークション（限られたパラチェーン枠を公平に配分）
+
+**デメリット:**
+- スロット獲得コスト（DOT ボンド必要）
+- パラチェーン数に上限あり（〜100）
+- 学習曲線（Substrate/WASM ランタイム）
+
 ## 比較表
 
-| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) |
-|------|------|---------------|---------------------|----------------------|-----------------|-------------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン |
-| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) |
-| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) |
-| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) |
-| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) | Multi-VM (AVAX) | eUTXO (ADA) | Parachain (DOT) |
+|------|------|---------------|---------------------|----------------------|-----------------|-------------|-----------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 | チェーン依存 | UTXOスキャン | パラ状態参照 |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール | VM依存 | 入力選択+出力 | XCM/直接 |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) | ◎ (Subnet独立) | ◎ (TX独立) | ◎ (パラ独立) |
+| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) | ◎ (EVM/Custom) | ◎ (Plutus) | ◎ (WASM) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) | チェーン依存 | ◎ (アドレス変更) | パラ依存 |
+| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 | VM分離 | Datum分離 | ランタイム |
 
 ## 実装ファイル
 
@@ -419,3 +537,5 @@ pub enum Datum {
 | Subnet (Avalanche) | `implementations/avalanche/src/subnet.rs` |
 | eUTXO (Cardano) | `implementations/cardano/src/eutxo.rs` |
 | Plutus (Cardano) | `implementations/cardano/src/plutus.rs` |
+| Parachain (Polkadot) | `implementations/polkadot/src/parachain.rs` |
+| XCM (Polkadot) | `implementations/polkadot/src/xcm.rs` |

@@ -9,6 +9,7 @@ members = [
     "implementations/cosmos",
     "implementations/avalanche",
     "implementations/cardano",
+    "implementations/polkadot",
 ]
 
 [workspace.package]
