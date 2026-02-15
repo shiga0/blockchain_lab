@@ -8,6 +8,7 @@
 | Ethereum | Keccak-256 | Keccak-256 (last 20 bytes) | Keccak-256 |
 | Kaspa | BLAKE2b | BLAKE2b | BLAKE2b |
 | Solana | SHA256 (PoH) | Ed25519公開鍵 | SHA256 |
+| Cosmos | SHA256 | Bech32 (secp256k1/Ed25519) | SHA256 |
 | Core | SHA256 | RIPEMD160(SHA256) | SHA256 |
 
 ### SHA256 (Bitcoin/Core)
@@ -51,6 +52,7 @@
 | Ethereum | secp256k1 | ECDSA |
 | Kaspa | secp256k1 | ECDSA / Schnorr |
 | Solana | Ed25519 | EdDSA |
+| Cosmos | secp256k1 / Ed25519 | ECDSA / EdDSA |
 | Core | P-256 (NIST) | ECDSA |
 
 ### secp256k1 vs P-256
@@ -151,6 +153,24 @@ Program Derived Address (PDA):
 - プログラムのみが「署名」可能（エスクロー等に使用）
 ```
 
+### Bech32 (Cosmos)
+
+```
+[HRP] + [separator] + [data]
+cosmos    1          pubkey_hash
+
+特徴:
+- 人間可読プレフィックス (HRP) でチェーン区別
+- secp256k1 または Ed25519 公開鍵をサポート
+- 複数鍵タイプ対応（バリデーター等）
+
+例: cosmos1hsk6jryyqjfhp5dhc55tc9jtckygx0eph6dd02
+
+バリデーター用:
+- cosmosvaloper... (オペレーター)
+- cosmosvalcons... (コンセンサス)
+```
+
 ## Merkle Trees
 
 ### Binary Merkle Tree (Bitcoin/Core)
@@ -194,3 +214,5 @@ Node = SHA256(left + right)
 | PoH/SHA256 (Solana) | `implementations/solana/src/consensus.rs` |
 | Ed25519 (Solana) | `implementations/solana/src/account.rs` |
 | PDA (Solana) | `implementations/solana/src/program.rs` |
+| Block Hash (Cosmos) | `implementations/cosmos/src/types.rs` |
+| Vote/Commit (Cosmos) | `implementations/cosmos/src/consensus.rs` |

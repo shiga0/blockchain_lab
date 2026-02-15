@@ -6,6 +6,7 @@ members = [
     "implementations/kaspa",
     "implementations/ethereum",
     "implementations/solana",
+    "implementations/cosmos",
 ]
 
 [workspace.package]

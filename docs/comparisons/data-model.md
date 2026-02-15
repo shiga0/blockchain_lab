@@ -7,6 +7,7 @@
 | UTXO | Bitcoin, Kaspa, Core | 未使用出力の集合 | 高 |
 | Account | Ethereum | アカウント残高マップ | 低 |
 | Account + Owner | Solana | アカウント + 所有者プログラム | 高 |
+| Account + ABCI | Cosmos | アカウント + モジュール分離 | 中 |
 
 ## UTXO Model (Unspent Transaction Output)
 
@@ -170,16 +171,76 @@ pub struct Account {
 }
 ```
 
+## Account + ABCI Model (Cosmos)
+
+### 概念
+
+Cosmos SDK はアカウントモデルを使用しつつ、ABCI でコンセンサスとアプリケーションを分離。
+
+```
+┌─────────────────────────────────────────────────────┐
+│              CometBFT (Consensus)                   │
+│  ・ブロック生成・検証                               │
+│  ・P2Pネットワーク                                 │
+└────────────────────┬────────────────────────────────┘
+                     │ ABCI Interface
+                     ▼
+┌─────────────────────────────────────────────────────┐
+│              Application (Cosmos SDK)               │
+├─────────────────────────────────────────────────────┤
+│  x/bank:    残高管理                               │
+│  x/staking: バリデーター・ステーキング             │
+│  x/gov:     ガバナンス投票                         │
+│  x/ibc:     チェーン間通信                         │
+└─────────────────────────────────────────────────────┘
+```
+
+### App Hash (状態ルート)
+
+```
+FinalizeBlock (TX実行)
+    ↓
+状態変更をストアに適用
+    ↓
+Commit → App Hash を計算
+    ↓
+App Hash が次ブロックのヘッダに含まれる
+```
+
+### 特徴
+
+**メリット:**
+- コンセンサスとアプリケーションの分離（モジュラー）
+- 任意の言語でアプリケーション実装可能
+- モジュールシステムで機能追加が容易
+
+**デメリット:**
+- ABCI 通信のオーバーヘッド
+- アプリケーション側の状態管理が必要
+
+### 実装 (Cosmos)
+
+```rust
+// implementations/cosmos/src/abci.rs
+
+pub trait Application {
+    fn init_chain(&mut self, req: RequestInitChain) -> ResponseInitChain;
+    fn check_tx(&self, req: RequestCheckTx) -> ResponseCheckTx;
+    fn finalize_block(&mut self, req: RequestFinalizeBlock) -> ResponseFinalizeBlock;
+    fn commit(&mut self, req: RequestCommit) -> ResponseCommit;
+}
+```
+
 ## 比較表
 
-| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) |
-|------|------|---------------|---------------------|
-| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 |
-| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 |
-| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) |
-| スマコン | △ (複雑) | ◎ (自然) | ◎ (プログラム) |
-| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) |
-| 状態とロジック | 結合 | 結合 | 分離 |
+| 観点 | UTXO | Account (ETH) | Account+Owner (SOL) | Account+ABCI (Cosmos) |
+|------|------|---------------|---------------------|----------------------|
+| 残高確認 | 全UTXOをスキャン | アカウント参照 | アカウント参照 | アカウント参照 |
+| 送金 | 入力選択 + 出力作成 | 残高更新 | lamports 更新 | x/bank モジュール |
+| 並列処理 | ◎ (TX独立) | △ (状態共有) | ◎ (事前宣言) | △ (順次) |
+| スマコン | △ (複雑) | ◎ (EVM) | ◎ (プログラム) | ◎ (モジュール) |
+| プライバシー | ◎ (アドレス変更) | △ (固定) | △ (固定) | △ (固定) |
+| 状態とロジック | 結合 | 結合 | 分離 | ABCI分離 |
 
 ## 実装ファイル
 
@@ -190,3 +251,5 @@ pub struct Account {
 | Account (Ethereum) | `implementations/ethereum/src/state.rs` |
 | Account+Owner (Solana) | `implementations/solana/src/account.rs` |
 | Runtime (Solana) | `implementations/solana/src/runtime.rs` |
+| ABCI (Cosmos) | `implementations/cosmos/src/abci.rs` |
+| Types (Cosmos) | `implementations/cosmos/src/types.rs` |

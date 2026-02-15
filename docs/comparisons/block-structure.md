@@ -5,6 +5,7 @@
 | Structure | Chains | Parents | Orphans | Throughput |
 |-----------|--------|---------|---------|------------|
 | Linear Chain | Bitcoin, Ethereum, Core | 1 | 破棄 | 低 |
+| Linear + Commit | Cosmos | 1 | なし (BFT) | 中 |
 | DAG | Kaspa, IOTA | 複数 | 含む | 高 |
 | Slot-Entry | Solana | 1 (prev slot) | スキップ可 | 超高 |
 
@@ -161,16 +162,90 @@ Entry は Shred に分割してネットワーク転送:
 - **誤り訂正**: UDP パケットロスに対応
 - **並列検証**: 受信しながら PoH 検証可能
 
+## Linear + Commit Structure (Cosmos)
+
+### 構造
+
+Cosmos は線形チェーンだが、LastCommit でファイナリティ証明を含む。
+
+```
+[Block N-1] ← [Block N] ← [Block N+1]
+                  │
+                  ├── Header (metadata + hashes)
+                  ├── Data (transactions)
+                  ├── Evidence (Byzantine proof)
+                  └── LastCommit (2/3+ signatures for N-1)
+```
+
+### ブロック構造
+
+```rust
+// implementations/cosmos/src/types.rs
+
+pub struct Block {
+    pub header: Header,          // ブロックメタデータ
+    pub data: Data,              // トランザクション
+    pub evidence: EvidenceData,  // 不正行為の証拠
+    pub last_commit: Option<Commit>,  // 前ブロックの署名
+}
+
+pub struct Header {
+    pub chain_id: String,
+    pub height: i64,
+    pub time: u64,
+    pub last_block_id: BlockId,      // 前ブロックへの参照
+    pub validators_hash: Hash,        // バリデーターセットのハッシュ
+    pub app_hash: Hash,               // アプリケーション状態ルート
+    pub proposer_address: Address,    // 提案者
+    // ... その他ハッシュ
+}
+
+pub struct Commit {
+    pub height: i64,
+    pub round: i32,
+    pub block_id: BlockId,
+    pub signatures: Vec<CommitSig>,  // 2/3+の署名
+}
+```
+
+### LastCommit の役割
+
+```
+Block N:
+┌─────────────────────────────────────────┐
+│ Header:                                 │
+│   height: N                             │
+│   last_block_id: hash(Block N-1)        │
+│                                         │
+│ LastCommit:                             │
+│   ┌───────────────────────────────────┐ │
+│   │ Commit for Block N-1              │ │
+│   │ ・Validator 1: ✓ signed           │ │
+│   │ ・Validator 2: ✓ signed           │ │
+│   │ ・Validator 3: ✓ signed           │ │
+│   │ ・Validator 4: ✗ absent           │ │
+│   │ (2/3+ = Block N-1 is FINAL)       │ │
+│   └───────────────────────────────────┘ │
+└─────────────────────────────────────────┘
+```
+
+### 特徴
+
+- **即時ファイナリティ**: LastCommit で前ブロックの最終化を証明
+- **フォークなし**: BFT コンセンサスによりフォーク不可能
+- **Evidence**: 二重投票等の不正を記録・スラッシング
+- **軽量クライアント対応**: Header と Commit だけで検証可能
+
 ## 比較表
 
-| 観点 | Linear Chain | DAG | Slot-Entry |
-|------|-------------|-----|------------|
-| ブロック生成 | 順次（待ち時間あり） | 並列（即時） | ストリーミング |
-| オーファン | 発生（無駄） | なし（全活用） | スキップ可 |
-| 順序付け | 自明（height） | 要アルゴリズム | PoH時間順 |
-| 実装難易度 | 低 | 高 | 中 |
-| ブロック時間 | 長め (Bitcoin: 10分) | 短い (Kaspa: 1秒) | 超短 (Solana: 400ms) |
-| 確認時間 | 長い | 短い | 超短い |
+| 観点 | Linear Chain | Linear+Commit | DAG | Slot-Entry |
+|------|-------------|---------------|-----|------------|
+| ブロック生成 | 順次（待ち時間あり） | 順次 (BFT) | 並列（即時） | ストリーミング |
+| オーファン | 発生（無駄） | なし | なし（全活用） | スキップ可 |
+| 順序付け | 自明（height） | height + round | 要アルゴリズム | PoH時間順 |
+| 実装難易度 | 低 | 中 | 高 | 中 |
+| ブロック時間 | 長め (10分) | 中 (1-7秒) | 短い (1秒) | 超短 (400ms) |
+| ファイナリティ | 確率的 | 即時 | 確率的 | 経済的 |
 
 ## Tips vs Single Tip
 
@@ -202,3 +277,4 @@ Tips は複数存在可能（子を持たないブロック）
 | Linear (Core) | `core/src/primitives/block.rs` |
 | DAG (Kaspa) | `implementations/kaspa/src/dag.rs` |
 | Slot-Entry (Solana) | `implementations/solana/src/consensus.rs` |
+| Linear+Commit (Cosmos) | `implementations/cosmos/src/types.rs` |

@@ -8,6 +8,7 @@
 | Ethereum | PoS (Casper FFG) | Economic (~13 min) | 12 sec | Low |
 | Kaspa | PoW + GHOSTDAG | Probabilistic (fast) | 1 sec | Medium |
 | Solana | PoH + Tower BFT | Economic (~2.5 sec) | 400 ms | Low |
+| Cosmos | Tendermint BFT | Instant (2/3+ precommit) | 1-7 sec | Low |
 | Core (base) | PoW (SHA256) | Probabilistic | Configurable | - |
 
 ## Proof of Work (PoW)
@@ -119,6 +120,67 @@ Depth 31: lockout = 2^32 slots (~54年)
 - 経済的ファイナリティ（ロールバックコスト増大）
 - 高スループット（並列トランザクション実行 + 400ms スロット）
 
+## Tendermint BFT (Cosmos)
+
+### ラウンドベースBFTコンセンサス
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                      Round N                                 │
+├────────────┬────────────┬─────────────┬────────────────────┤
+│  Propose   │  Prevote   │  Precommit  │      Commit        │
+│            │            │             │                    │
+│ Proposer   │ Validators │ Validators  │ Block is FINAL     │
+│ sends      │ vote on    │ vote if     │ (no forks!)        │
+│ block      │ proposal   │ 2/3+ prevote│                    │
+├────────────┼────────────┼─────────────┼────────────────────┤
+│ Timeout?   │ Need 2/3+  │ Need 2/3+   │ Instant finality   │
+│ → Round+1  │ prevotes   │ precommits  │                    │
+└────────────┴────────────┴─────────────┴────────────────────┘
+```
+
+### フロー詳細
+
+```
+1. Propose:    提案者がブロックを作成・ブロードキャスト
+       ↓
+2. Prevote:    各バリデーターが有効なブロックに prevote
+       ↓       (2/3+ prevotes で POL - Proof of Lock 形成)
+3. Precommit:  POL があれば precommit
+       ↓       (2/3+ precommits でコミット確定)
+4. Commit:     ブロック最終化（フォーク不可能）
+```
+
+### 即時ファイナリティ
+
+```
+PoW/PoS (Bitcoin/Ethereum):    Tendermint BFT (Cosmos):
+  Block N                         Block N
+    ↓ (probabilistic)               ↓ (2/3+ precommits)
+  Block N+1                       ✓ FINAL (no reversal possible)
+    ↓ (still not final)
+  Block N+2
+    ↓
+  ...
+  Block N+6
+    ↓ (~final)
+```
+
+**特徴:**
+- **即時ファイナリティ**: 2/3+ precommit でブロック確定、フォーク不可
+- **BFT耐性**: 1/3 未満の Byzantine ノードに耐性
+- **ABCI**: コンセンサスとアプリケーションを分離（モジュラー設計）
+- **IBC対応**: チェーン間通信プロトコルのベース
+
+### タイムアウト設定
+
+| パラメータ | デフォルト | 増分/ラウンド |
+|-----------|-----------|--------------|
+| Propose | 3000ms | +500ms |
+| Prevote | 1000ms | +500ms |
+| Precommit | 1000ms | +500ms |
+| Commit | 1000ms | - |
+
 ## 実装ファイル
 
 | Chain | File |
@@ -128,3 +190,4 @@ Depth 31: lockout = 2^32 slots (~54年)
 | Kaspa | `implementations/kaspa/src/consensus.rs` |
 | Ethereum | `implementations/ethereum/src/consensus.rs` |
 | Solana | `implementations/solana/src/consensus.rs` |
+| Cosmos | `implementations/cosmos/src/consensus.rs` |

@@ -1,0 +1,15 @@
+[package]
+name = "blockchain-lab-cosmos"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Cosmos-style (Tendermint BFT, ABCI, IBC) blockchain implementation for comparison study"
+
+[dependencies]
+blockchain-lab-core.workspace = true
+serde.workspace = true
+sha2.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
