@@ -1,72 +1,104 @@
 # blockchain_lab
 
-ブロックチェーンアーキテクチャを比較・学習するためのRust実装集。
+A Rust-based blockchain architecture playground  
+to compare and experiment with different blockchain designs.
 
-## 概要
+ブロックチェーンアーキテクチャを比較・学習するための Rust 実装集。
 
-異なるブロックチェーンの仕組みを理解するため、共通のコア実装をベースに各チェーン固有の特徴を実装・比較できる環境。
+---
 
-## 構成
+## 🎯 Purpose
+
+This repository provides:
+
+- A shared core implementation
+- Multiple chain-specific adaptations
+- Architectural comparison across major blockchains
+
+The goal is not to fully reimplement each chain,
+but to understand their **design trade-offs** from first principles.
+
+---
+
+## 🧱 Architecture
 
 ```
 blockchain_lab/
 ├── core/                    # 共通ライブラリ（ベース実装）
 ├── implementations/
-│   ├── bitcoin/             # Bitcoin風実装
-│   ├── kaspa/               # Kaspa風実装（GHOSTDAG）
-│   ├── ethereum/            # Ethereum風実装（Account Model）
-│   ├── solana/              # Solana風実装（PoH + Tower BFT）
-│   ├── cosmos/              # Cosmos風実装（Tendermint BFT + ABCI）
-│   ├── avalanche/           # Avalanche風実装（Snowball + Subnet）
-│   ├── cardano/             # Cardano風実装（Ouroboros + eUTXO + Plutus）
-│   ├── polkadot/            # Polkadot風実装（BABE + GRANDPA + Parachains）
-│   ├── sui/                 # Sui風実装（Mysticeti + Object Model + PTB）
-│   ├── aptos/               # Aptos風実装（AptosBFT + Block-STM + Move）
-│   └── monero/              # Monero風実装（CryptoNote + RingCT + Bulletproofs）
+│   ├── bitcoin/
+│   ├── kaspa/
+│   ├── ethereum/
+│   ├── solana/
+│   ├── cosmos/
+│   ├── avalanche/
+│   ├── cardano/
+│   ├── polkadot/
+│   ├── sui/
+│   ├── aptos/
+│   └── monero/
 ├── docs/
-│   └── comparisons/         # 比較ドキュメント
-└── experiments/             # 実験・ベンチマーク
+│   └── comparisons/
+└── experiments/
 ```
 
-## 比較表
+Each implementation extends or modifies the shared core
+to reflect the design philosophy of the target chain.
 
-| 観点 | Core | Bitcoin | Kaspa | Ethereum | Solana | Cosmos | Avalanche | Cardano | Polkadot | Sui | Aptos | Monero |
-|------|------|---------|-------|----------|--------|--------|-----------|---------|----------|-----|-------|--------|
-| データモデル | UTXO | UTXO | UTXO | Account | Account+Owner | Account+ABCI | Multi-VM | eUTXO | Relay+Para | Object | Resource | Privacy UTXO |
-| コンセンサス | PoW | PoW | PoW+GHOSTDAG | PoS | PoH+TowerBFT | Tendermint | Snowball | Ouroboros | BABE+GRANDPA | Mysticeti | AptosBFT | RandomX PoW |
-| ブロック構造 | 線形 | 線形 | DAG | 線形 | Slot-Entry | 線形+Commit | Snowman/DAG | スロット | Relay+Para | DAG | DAG | 線形 |
-| ハッシュ | SHA256 | Double SHA256 | BLAKE2b | Keccak-256 | SHA256 | SHA256 | SHA256 | BLAKE2b | BLAKE2-256 | BLAKE2b | SHA256/SHA3 | Keccak-256 |
-| 署名曲線 | P-256 | secp256k1 | secp256k1 | secp256k1 | Ed25519 | secp256k1/Ed25519 | secp256k1 | Ed25519 | Sr25519 | Multi | Multi | Ed25519+Ring |
-| ブロック時間 | 可変 | 10分 | 1秒 | 12秒 | 400ms | 1-7秒 | 1-2秒 | 1秒 | 6秒 | ~500ms | ~1秒 | 2分 |
-| ファイナリティ | 確率的 | 確率的 | 確率的 | 経済的 | 経済的 | 即時 | 確率的 | 確率的 | 決定論的 | 決定論的 | 決定論的 | 確率的 |
+---
 
-## クイックスタート
+## 📊 Comparison Overview
+
+| Aspect | Bitcoin | Kaspa | Ethereum | Solana | Cosmos | Avalanche | Cardano | Polkadot | Sui | Aptos | Monero |
+|--------|---------|-------|----------|--------|--------|-----------|---------|----------|-----|-------|--------|
+| Model | UTXO | UTXO | Account | Account | ABCI | Multi-VM | eUTXO | Relay+Para | Object | Resource | Privacy UTXO |
+| Consensus | PoW | PoW+GHOSTDAG | PoS | PoH+TowerBFT | Tendermint | Snowball | Ouroboros | BABE+GRANDPA | Mysticeti | AptosBFT | RandomX |
+| Structure | Linear | DAG | Linear | Slot | Linear | DAG | Slot | Relay | DAG | DAG | Linear |
+| Finality | Probabilistic | Probabilistic | Economic | Economic | Instant | Probabilistic | Probabilistic | Deterministic | Deterministic | Deterministic | Probabilistic |
+
+For detailed comparisons, see `docs/comparisons/`.
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# ビルド
-cargo build --release
-
-# Core のテスト
-cargo test -p blockchain-lab-core
-
-# 全体ビルド
 cargo build --workspace
+cargo test -p blockchain-lab-core
 ```
 
-## 学習の進め方
+---
 
-1. **Core を理解**: `core/src/` のコードを読み、基本を把握
-2. **比較ドキュメント**: `docs/comparisons/` で違いを確認
-3. **実装を追加**: 各 `implementations/*/src/` にTODOを実装
-4. **実験**: `experiments/` で動作確認・ベンチマーク
+## 🧠 How to Study
 
-## ドキュメント
+1. Start with `core/src/`
+2. Compare design differences in `docs/comparisons/`
+3. Inspect each chain implementation
+4. Run experiments in `experiments/`
 
-- [コンセンサス比較](docs/comparisons/consensus.md)
-- [データモデル比較](docs/comparisons/data-model.md)
-- [ブロック構造比較](docs/comparisons/block-structure.md)
-- [暗号方式比較](docs/comparisons/cryptography.md)
+---
 
-## ライセンス
+## 🔬 Philosophy
 
-Educational purposes.
+Understand systems by reconstructing them.
+
+Compare trade-offs.
+Expose assumptions.
+Reduce abstraction.
+
+---
+
+## 📚 Documentation
+
+- Consensus comparison
+- Data model comparison
+- Block structure comparison
+- Cryptography comparison
+
+See `docs/comparisons/`.
+
+---
+
+## 📜 License
+
+Educational use only.
